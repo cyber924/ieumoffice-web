@@ -47,10 +47,14 @@ export function completeDraft(snapshot,direct=[],generated=[],{mode='sample',tod
  if(!snapshot?.targets)return {edits:[],examples:0,missing:0}
  const targets=new Map(snapshot.targets.map(t=>[t.cellId,t]))
  const accepted=new Map()
- for(const entry of [...direct,...generated]){
+ for(const [index,entry] of [...direct,...generated].entries()){
   const t=targets.get(entry?.cellId)
   const value=typeof entry?.value==='string'?entry.value.trim():''
   if(!t||t.current||!value||value.length>1000||accepted.has(entry.cellId))continue
+  // Model output cannot invent identity, financial facts, approvals, or dates.
+  // These must come from the user, current date, or explicitly marked placeholders.
+  if(index>=direct.length && (['date','personal','numeric','approval'].includes(t.kind)||
+      ['date','author','department','amount'].includes(t.baseKey||t.fieldKey)))continue
   accepted.set(t.cellId,{cellId:t.cellId,value,source:entry.source||'AI 초안 (검토 필요)'})
  }
  if(mode==='sample'){

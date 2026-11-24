@@ -107,3 +107,9 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 /* Compact report defaults entry next to AI settings */
 #reportProfileOpen{font-size:11px;padding:6px 10px;border:1px solid #dce5f3;border-radius:7px;background:#fff;color:#41557a;white-space:nowrap}
 #reportProfileOpen:hover{background:#f0f4ff;border-color:#9bb5f4}
+
+/* AI full-draft mode: compact visual control, no change to document styles */
+.ai-fill-mode{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid #e9edf5;background:#f8faff}
+.ai-fill-mode label{font-size:11px;font-weight:650;color:#3e5273}
+.ai-fill-mode select{max-width:100%;padding:6px 8px;border:1px solid #cddbf6;border-radius:7px;font-size:11px;background:white;color:#294575}
+.ai-fill-mode small{display:block;width:100%;font-size:10px;color:#667b93;line-height:1.5}
