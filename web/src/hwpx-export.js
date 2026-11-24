@@ -13,7 +13,7 @@ async function engine(){
  return enginePromise
 }
 export async function exportHwpx(paper,loadEngine=engine){
- if(paper.querySelector('img,svg,canvas,video,audio,iframe'))throw new Error('그림이나 도형이 포함된 문서는 HWPX 변환을 지원하지 않습니다. Word로 저장해 주세요.')
+ if(paper.querySelector('svg,canvas,video,audio,iframe'))throw new Error('지원하지 않는 개체가 포함되어 HWPX 저장을 중단했습니다.')
  const {HwpDocument}=await loadEngine()
  const doc=HwpDocument.createEmpty()
  let bytes
@@ -28,8 +28,41 @@ export async function exportHwpx(paper,loadEngine=engine){
      style['border'+side]='1px solid #000000'
    }
   }
+  const pictures=[]
+  for(const [index,img] of [...copy.querySelectorAll('img')].entries()){
+   const original=paper.querySelectorAll('img')[index]
+   const source=original.currentSrc||original.getAttribute('src')||''
+   let response
+   try{response=await fetch(source)}catch{throw new Error('이미지를 읽지 못해 HWPX 저장을 중단했습니다. 이미지를 다시 삽입해 주세요.')}
+   if(!response.ok)throw new Error('이미지를 읽지 못해 HWPX 저장을 중단했습니다.')
+   const image=await response.blob(), mime=image.type.toLowerCase().split(';')[0]
+   const ext=({'image/png':'png','image/jpeg':'jpg','image/gif':'gif','image/bmp':'bmp'})[mime]
+   if(!ext)throw new Error('HWPX는 PNG, JPEG, GIF, BMP 이미지를 지원합니다. 이미지를 변환해 다시 삽입해 주세요.')
+   const width=Math.max(1,Math.min(1200,Math.round(Number(original.getAttribute('width'))||original.width||original.naturalWidth||420)))
+   const height=Math.max(1,Math.min(1600,Math.round(Number(original.getAttribute('height'))||original.height||original.naturalHeight||220)))
+   const marker='IEUMIMAGE'+index+'X'+Math.random().toString(36).slice(2)+'END'
+   pictures.push({marker,bytes:new Uint8Array(await image.arrayBuffer()),width,height,ext})
+   img.replaceWith(copy.ownerDocument.createTextNode(marker))
+  }
   const result=JSON.parse(doc.pasteHtml(0,0,0,copy.innerHTML))
   if(!result.ok)throw new Error('본문을 한글 문서로 변환하지 못했습니다.')
+  const checked=(label,json)=>{const v=JSON.parse(json);if(!v.ok)throw new Error(label+' 변환에 실패했습니다.');return v}
+  for(const pic of pictures){
+   const match=JSON.parse(doc.searchText(pic.marker,0,0,0,true,true,true))
+   if(!match.found||match.totalMatchCount!==1)throw new Error('그림 위치를 찾지 못해 HWPX 저장을 중단했습니다.')
+   const {para,charOffset,cellContext}=match
+   const args=[pic.bytes,pic.width*75,pic.height*75,pic.width,pic.height,pic.ext,'']
+   if(cellContext){
+    const c=cellContext,path=JSON.stringify([{controlIndex:c.ctrlIdx,cellIndex:c.cellIdx,cellParaIndex:c.cellPara}])
+    checked('그림 위치',doc.deleteTextInCellByPath(0,c.parentPara,path,charOffset,pic.marker.length))
+    const inserted=checked('그림',doc.insertPictureInCell(0,c.parentPara,charOffset,path,...args))
+    checked('그림 배치',doc.setCellPicturePropertiesByPath(0,c.parentPara,path,inserted.controlIdx,JSON.stringify({treatAsChar:true})))
+   }else{
+    checked('그림 위치',doc.deleteText(0,para,charOffset,pic.marker.length))
+    const inserted=checked('그림',doc.insertPicture(0,para,charOffset,'',...args))
+    checked('그림 배치',doc.setPictureProperties(0,para,inserted.controlIdx,JSON.stringify({treatAsChar:true})))
+   }
+  }
   const exported=doc.exportHwpxWithReport()
   try{
    const report=JSON.parse(exported.contentLoss())
@@ -44,11 +77,22 @@ export async function exportHwpx(paper,loadEngine=engine){
  if(!section)throw new Error('HWPX 본문을 확인하지 못했습니다.')
  const xml=new DOMParser().parseFromString(section,'application/xml')
  if(xml.querySelector('parsererror'))throw new Error('HWPX 본문 형식이 올바르지 않습니다.')
+ const imageCount=paper.querySelectorAll('img').length
+ if(xml.getElementsByTagNameNS('*','pic').length!==imageCount)throw new Error('일부 그림이 저장되지 않아 HWPX 저장을 중단했습니다.')
  const expected=paper.querySelectorAll('table').length
  const actual=xml.getElementsByTagNameNS('*','tbl').length
  if(expected!==actual)throw new Error('일부 표가 변환되지 않아 HWPX 저장을 중단했습니다.')
  const input=(paper.innerText||paper.textContent||'').replace(/\s/g,'')
  const output=Array.from(xml.getElementsByTagNameNS('*','t'),n=>n.textContent||'').join('').replace(/\s/g,'')
  if(input!==output)throw new Error('변환한 본문이 원본과 달라 HWPX 저장을 중단했습니다.')
+ // Add the standard diagonal element omitted by the engine on newly-created borders.
+ const header=await zip.file('Contents/header.xml')?.async('string')
+ if(!header)throw new Error('HWPX 서식을 확인하지 못했습니다.')
+ const normalized=header.replace(/<hh:borderFill\b[^>]*>[\s\S]*?<\/hh:borderFill>/g,block=>
+  /<hh:diagonal\b/.test(block)?block:block.replace(/(?=<hc:fillBrush\b|<\/hh:borderFill>)/,'<hh:diagonal type="SOLID" width="0.1 mm" color="none"/>'))
+ zip.file('Contents/header.xml',normalized)
+ bytes=await zip.generateAsync({type:'uint8array',compression:'DEFLATE'})
+ const verified=new HwpDocument(bytes)
+ try{if(verified.pageCount()<1)throw new Error('HWPX 최종 파일을 다시 열지 못했습니다.')}finally{verified.free()}
  return new Blob([bytes],{type:'application/hwp+zip'})
 }

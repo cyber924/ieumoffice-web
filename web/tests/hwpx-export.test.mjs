@@ -19,6 +19,16 @@ test('new HWPX reopens with Korean text and native table',async()=>{
  for(const id of ids){const b=header.match(new RegExp('<hh:borderFill\\b[^>]*\\bid="'+id+'"[^>]*>[\\s\\S]*?</hh:borderFill>'))?.[0]||'';for(const side of ['left','right','top','bottom'])assert.match(b,new RegExp('<hh:'+side+'Border[^>]*type="SOLID"'))}
 
 })
-test('conversion blocks unsupported images instead of losing them',async()=>{
- await assert.rejects(exportHwpx(paper('<p>본문</p><img src="x">'),load),/그림이나 도형/)
+const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lFZ0AAAAASUVORK5CYII='
+test('images in body and table cells are embedded as native HWPX pictures',async()=>{
+ const blob=await exportHwpx(paper('<p>앞<img width="100" height="50" src="'+png+'">뒤</p><table><tr><td>셀<img width="50" height="50" src="'+png+'">끝</td></tr></table>'),load)
+ const zip=await JSZip.loadAsync(await blob.arrayBuffer()),xml=await zip.file('Contents/section0.xml').async('string')
+ assert.equal((xml.match(/<hp:pic\b/g)||[]).length,2)
+ assert.ok(Object.keys(zip.files).some(name=>/^BinData\//.test(name)))
+ assert.match(xml,/앞/);assert.match(xml,/끝/)
+ const header=await zip.file('Contents/header.xml').async('string')
+ for(const b of header.match(/<hh:borderFill\b[^>]*>[\s\S]*?<\/hh:borderFill>/g)||[])assert.match(b,/<hh:diagonal\b/)
+})
+test('inaccessible images fail rather than silently disappearing',async()=>{
+ await assert.rejects(exportHwpx(paper('<p>본문</p><img src="bad-url">'),load),/이미지를 읽지 못해/)
 })
