@@ -178,6 +178,7 @@ function htmlTable(state,node,type,depth=0) {
       const id=makeBinding(state,cell)
       const dims=tableCellLayout(cell,type)
       let attrs=' data-bind="'+id+'"'
+      if(type==='hwpx'&&dims.colAddr>=0)attrs+=' data-hwp-col="'+dims.colAddr+'"'
       if(dims.colSpan>1)attrs+=' colspan="'+dims.colSpan+'"'
       if(dims.rowSpan>1)attrs+=' rowspan="'+dims.rowSpan+'"'
       if(type==='docx'&&dims.width)attrs+=' style="width:'+dims.width+'px"'
