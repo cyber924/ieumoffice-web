@@ -109,5 +109,28 @@ service cloud.firestore {
         && request.resource.data.updatedAt is timestamp;
       allow delete: if owner(userId);
     }
+    // Private AI prompt catalog. IDs are content hashes to avoid duplicates.
+    match /users/{userId}/miloPrompts/{promptId} {
+      allow read: if owner(userId);
+      allow create, update: if owner(userId)
+        && promptId.matches('^[0-9a-f]{64}$')
+        && request.resource.data.keys().hasOnly(['title','text','category','updatedAt'])
+        && request.resource.data.keys().hasAll(['title','text','category','updatedAt'])
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 80
+        && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 5000
+        && request.resource.data.category is string && request.resource.data.category.size() <= 30
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if owner(userId);
+    }
+    // Only trusted server credentials can write shared notices and locks.
+    match /miloBizinfoNotices/{noticeId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    match /miloSyncLocks/{lockId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
   }
 }

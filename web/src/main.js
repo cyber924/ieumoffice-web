@@ -16,7 +16,7 @@ import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} fro
 import {installMiloSuite} from './milo-suite.js'
 import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -718,6 +718,7 @@ initCloud(config,u=>{
   $('authButton').textContent=u?.email||'로그인'
   if(!u){referenceDocuments=[];referenceSnapshot=[];cloudId=null}
   $('aiStatus').textContent=u?'연결 상태 확인':'로그인 후 AI 사용'
+  if(u)window.dispatchEvent(new CustomEvent('milosoft:auth-ready'))
   void restoreRememberedTemplate()
 }).then(connected=>{if(!connected)$('aiStatus').textContent='AI·Firebase 설정 전'}).catch(e=>{console.warn('Firebase configuration unavailable',e.message);$('aiStatus').textContent='연결 설정 오류'})
 restoreDraft()
@@ -847,7 +848,7 @@ const convertToDocxCopy=(kind)=>{
 }
 const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
 installMiloSuite({
- paper,toast,markDirty,openModal,convertToDocxCopy,
+ paper,toast,markDirty,openModal,convertToDocxCopy,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,
  getUser:user,getToken:token,getModel:()=>selectedModel,
  getProviderKey:()=>sessionKeys[selectedModel]||'',
  setFilename:name=>{$('filename').value=name},

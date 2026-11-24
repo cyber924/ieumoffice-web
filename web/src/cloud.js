@@ -166,3 +166,29 @@ export async function listTemplateMemories(){
  checkUser(uid)
  return snapshots.docs.map(d=>({id:d.id,...d.data()}))
 }
+
+async function catalogId(value){
+ const data=new TextEncoder().encode(String(value).normalize('NFKC').trim().replace(/\s+/g,' ').toLowerCase())
+ const digest=await crypto.subtle.digest('SHA-256',data)
+ return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('')
+}
+export async function savePersonalPrompt(entry){
+ const uid=requireUser(),title=String(entry.title||'').trim().slice(0,80),text=String(entry.text||'').trim().slice(0,5000),category=String(entry.category||'행정').slice(0,30)
+ if(!title||!text)throw new Error('프롬프트 제목과 내용이 필요합니다.')
+ const id=await catalogId(category+'\n'+title+'\n'+text);checkUser(uid)
+ const ref=modules.fs.doc(db,'users',uid,'miloPrompts',id)
+ await modules.fs.runTransaction(db,async tx=>{const current=await tx.get(ref);if(current.exists())return;tx.set(ref,{title,text,category,updatedAt:modules.fs.serverTimestamp()})})
+ checkUser(uid);return id
+}
+export async function listPersonalPrompts(){
+ const uid=requireUser(),q=modules.fs.query(modules.fs.collection(db,'users',uid,'miloPrompts'),modules.fs.orderBy('updatedAt','desc'),modules.fs.limit(500))
+ const snap=await modules.fs.getDocs(q);checkUser(uid)
+ return snap.docs.map(d=>({id:d.id,...d.data(),guide:'내 저장 프롬프트'}))
+}
+export async function readNotices(){
+ requireUser();const q=modules.fs.query(modules.fs.collection(db,'miloBizinfoNotices'),modules.fs.orderBy('updatedAt','desc'),modules.fs.limit(500))
+ const snap=await modules.fs.getDocs(q);return snap.docs.map(d=>({id:d.id,...d.data()}))
+}
+export async function readNoticeRefreshTime(){
+ requireUser();const snap=await modules.fs.getDoc(modules.fs.doc(db,'miloSyncLocks','bizinfo'));return snap.exists()?snap.data()?.lastCompletedAt?.toDate?.()||null:null
+}

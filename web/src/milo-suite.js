@@ -19,7 +19,7 @@ function external(url){
 }
 function short(s,size=150){return String(s||'').slice(0,size)}
 function parseJSON(result){return result.json().catch(()=>({}))}
-export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getProviderKey,setFilename,setPrompt,fileName}){
+export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getProviderKey,setFilename,setPrompt,fileName,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime}){
  let savedRange=null
  const cache={gallery:[],nextCursor:null,business:[]}
  const uid=()=>getUser()?.uid||'guest'
@@ -55,7 +55,13 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   if(!res.ok)throw Error(json.error||'AI 요청 실패')
   return json
  }
- function loadPersonalPrompts(){return parseUserPrompts(uid(),storage())}
+ async function loadPersonalPrompts(){
+  const local=parseUserPrompts(uid(),storage())
+  if(!getUser())return local
+  for(const item of local)await savePersonalPrompt(item)
+  return await listPersonalPrompts()
+ }
+ window.addEventListener('milosoft:auth-ready',()=>{void loadPersonalPrompts().catch(()=>{})})
  function showPrompts(category='전체',query=''){
   const host=modal('마일로 문서 프롬프트','표준 문서부터 전문 분야까지 프롬프트를 선택해 왼쪽 AI에 적용하세요.')
   const tools=el('div','milo-filter')
@@ -65,9 +71,11 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   tools.append(select,input,button('내 프롬프트 추가',()=>addUserPrompt()))
   host.append(tools)
   const list=el('div','milo-list');host.append(list)
+  let personal=parseUserPrompts(uid(),storage())
+  const syncStatus=el('p','','저장된 프롬프트를 불러오는 중…');host.append(syncStatus)
   const redraw=()=>{
    list.replaceChildren()
-   const found=filterPrompts([...loadPersonalPrompts(),...BASE_PROMPTS],select.value,input.value)
+   const found=filterPrompts([...personal,...BASE_PROMPTS],select.value,input.value)
    for(const p of found){
     const item=el('article','milo-list-item')
     const info=el('div');info.append(el('strong','',p.title),el('small','',p.category+' · '+p.guide))
@@ -80,6 +88,7 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
    if(!found.length)list.append(el('p','','검색 결과가 없습니다.'))
   }
   select.onchange=redraw;input.oninput=redraw;redraw()
+  loadPersonalPrompts().then(items=>{personal=items;syncStatus.textContent=getUser()?'내 프롬프트 DB 연결됨':'로그인하면 다른 기기에서도 볼 수 있습니다.';redraw()}).catch(()=>{syncStatus.textContent='DB 연결 실패 · 이 브라우저의 프롬프트를 표시합니다.'})
  }
  function addUserPrompt(){
   const host=modal('새 프롬프트 등록','사용자 전용 프롬프트를 저장해 다음에도 사용할 수 있습니다.')
@@ -88,8 +97,8 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   for(const c of CATEGORIES.slice(1)){const op=el('option','',c);op.value=c;category.append(op)}
   const text=el('textarea');text.rows=8;text.placeholder='AI에게 전달할 상세 지침을 작성하세요.'
   host.append(withLabel('프롬프트 이름',title),withLabel('분야',category),withLabel('내용',text))
-  host.append(button('저장',()=>{
-   try{saveUserPrompt(uid(),{title:title.value,category:category.value,text:text.value},storage());toast('프롬프트 저장 완료');showPrompts(category.value)}
+  host.append(button('저장',async()=>{
+   try{const entry={title:title.value,category:category.value,text:text.value};if(!getUser())throw Error('DB 저장을 위해 로그인하세요.');await savePersonalPrompt(entry);toast('프롬프트 DB 저장 완료');showPrompts(category.value)}
    catch(e){toast(e.message)}
   },'milo-primary'))
  }
@@ -104,19 +113,20 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
    try{
     const data=await aiRequest('promptRecommendation',select.value+' 분야의 실제 업무에서 자주 쓰는 문서 작성 프롬프트를 5개 추천해 줘.')
     if(!data.prompts?.length)throw Error('추천 결과가 없습니다.')
+    let stored=0,failed=0
     for(const p of data.prompts){
+     try{await savePersonalPrompt({title:p.title,text:p.text,category:select.value});stored++}catch{failed++}
      const row=el('article','milo-list-item');const body=el('div')
      body.append(el('strong','',p.title),el('small','',p.text))
      row.append(body,button('사용',()=>{
       setPrompt(p.text);document.querySelector('#modal')?.close();toast('추천 프롬프트를 AI 입력창에 적용했어요.')
      }))
-     row.append(button('저장',()=>{
-      saveUserPrompt(uid(),{title:p.title,text:p.text,category:select.value},storage())
-      toast('내 프롬프트에 저장했습니다.')
+     row.append(button('다시 저장',async()=>{
+      try{await savePersonalPrompt({title:p.title,text:p.text,category:select.value});toast('내 프롬프트 DB 저장 완료')}catch{toast('DB 저장 실패 · 다시 시도해 주세요.')}
      }))
      list.append(row)
     }
-    status.textContent=data.prompts.length+'개 추천'
+    status.textContent=data.prompts.length+'개 추천 · DB 저장 '+stored+'개'+(failed?' · 저장 실패 '+failed+'개':'')
    }catch(e){status.textContent=e.message}
   },'milo-primary'),status,list)
  }
@@ -227,37 +237,37 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   host.append(withLabel(isTranslate?'번역 언어':'문체 스타일',select),run,status,preview,apply)
  }
  function notices(){
-  const host=modal('기업마당 지원사업 공고','기업마당 최신 공고의 제목과 신청 정보를 표시합니다. 사업개요와 첨부파일은 원문에서 확인합니다.')
+  const host=modal('기업마당 지원사업 공고','저장된 공고를 표시합니다. 최신 공고를 수집하려면 새로고침을 누르세요.')
   const filter=el('select')
-  for(const [value,title] of [['','전체'],['01','금융'],['02','기술'],['03','인력'],['04','수출'],['05','내수'],['06','창업'],['07','경영'],['09','기타']]){
-   const op=el('option','',title);op.value=value;filter.append(op)
+  const fields=[['','전체'],['금융','금융'],['기술','기술'],['인력','인력'],['수출','수출'],['내수','내수'],['창업','창업'],['경영','경영'],['기타','기타']]
+  for(const [value,title] of fields){const op=el('option','',title);op.value=value;filter.append(op)}
+  const search=el('input');search.type='search';search.placeholder='공고명·기관 검색'
+  const status=el('p','','저장된 공고를 불러오는 중…'),list=el('div','milo-list')
+  const link=button('기업마당 공식 지원사업공고 열기',()=>external('https://www.bizinfo.go.kr/sii/siia/selectSIIA200View.do?schPblancDiv=01'))
+  let notices=[]
+  const redraw=()=>{
+   list.replaceChildren();const q=search.value.trim().toLowerCase()
+   const items=notices.filter(n=>(!filter.value||String(n.content).includes('지원 분야: '+filter.value))&&(!q||(n.title+' '+n.content).toLowerCase().includes(q)))
+   for(const n of items){const row=el('article','milo-notice-row');const period=String(n.content||'').split('신청 기간: ')[1]||'';let stage='원문 확인'
+    if(/상시|예산\s*소진/.test(period))stage='상시·원문 확인'
+    else{const dates=period.match(/\d{4}[-.]\d{2}[-.]\d{2}/g)||[];if(dates.length){const last=dates[dates.length-1].replace(/\./g,'-');const end=new Date(last+'T23:59:59+09:00');if(Number.isFinite(end.getTime())){const start=new Date(dates[0].replace(/\./g,'-')+'T00:00:00+09:00');stage=end<Date.now()?'마감':dates.length>1&&Number.isFinite(start.getTime())&&start>Date.now()?'접수 예정':dates.length>1?'접수 중':'원문 확인'}}}
+    row.append(el('strong','',n.title),el('p','',stage+' · '+(n.content||'상세 내용은 원문에서 확인하세요.')))
+    row.append(button('기업마당 원문 열기',()=>external(n.url),'milo-primary'))
+    row.append(button('사업계획서 프롬프트로 연결',()=>{setPrompt('다음 기업마당 지원사업 공고를 참고해 사업계획서 초안을 작성해 줘. 원문과 신청 조건을 반드시 확인하게 안내해.\n공고: '+n.title+'\n신청 정보: '+n.content);document.querySelector('#modal')?.close()}));list.append(row)}
+   if(!items.length)list.append(el('p','','표시할 공고가 없습니다.'))
   }
-  const status=el('p','','기업마당 공고 조회 준비')
-  const list=el('div','milo-list')
-  const link=button('기업마당 공식 지원사업공고 열기',()=>external('https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/list.do'))
+  const load=async()=>{notices=await readNotices();redraw();let last=null;try{last=await readNoticeRefreshTime()}catch{}status.textContent=notices.length+'개 저장된 공고'+(last?' · 마지막 수집 '+last.toLocaleString('ko-KR'):'')+' · 상세·첨부는 원문에서 확인'}
   const refresh=async()=>{
-   status.textContent='기업마당 최신 공고 조회 중…';list.replaceChildren()
-   try{
-    const r=await fetch('/api/bizinfo?field='+encodeURIComponent(filter.value))
-    const data=await parseJSON(r)
-    if(!r.ok)throw Error(data.message||'기업마당 연결 실패')
-    for(const n of data.items||[]){
-     const row=el('article','milo-notice-row')
-     row.append(el('strong','',n.title),el('p','',n.content||'신청 정보는 원문에서 확인해 주세요.'))
-     row.append(button('기업마당 원문 열기',()=>external(n.url),'milo-primary'))
-     row.append(button('사업계획서 프롬프트로 연결',()=>{
-      setPrompt('다음 기업마당 지원사업 공고의 제목과 신청 정보를 참고하여 지원사업 사업계획서 초안을 작성해 줘. 공고의 원문과 신청 조건은 반드시 공식 페이지에서 확인하게 안내해.\\n공고: '+n.title+'\\n신청 정보: '+n.content)
-      document.querySelector('#modal')?.close()
-      toast('공고를 참고하는 프롬프트를 AI 입력창에 넣었습니다.')
-     }))
-     list.append(row)
-    }
-    status.textContent=(data.items||[]).length+'개 공고 · 최신 목록 기준, 상세·첨부는 기업마당 원문에서 확인'
-   }catch(e){status.textContent=e.message+' · 공식 사이트에서 열어 볼 수 있어요.'}
+   if(!getUser()){status.textContent='공고 DB 이용을 위해 로그인해 주세요.';return}
+   status.textContent='기업마당에서 공고 수집 중…'
+   try{const auth=await getToken();if(!auth)throw Error('로그인이 필요합니다.');const r=await fetch('/api/notice-refresh',{method:'POST',headers:{Authorization:'Bearer '+auth}});const data=await parseJSON(r);if(!r.ok)throw Error(data.message||'공고 조회 실패')
+    await load();status.textContent='신규 '+data.added+'건 · 변경 '+data.updated+'건 · 기존 '+data.existing+'건 · '+new Date(data.collectedAt).toLocaleString('ko-KR')
+   }catch(e){status.textContent='수집 실패: '+e.message+' · 기존 공고를 유지합니다.'}
   }
-  filter.onchange=refresh
-  host.append(withLabel('지원 분야',filter),button('새로고침',refresh),status,list,link)
-  void refresh()
+  filter.onchange=redraw;search.oninput=redraw
+  host.append(withLabel('지원 분야',filter),search,button('새로고침',refresh),status,list,link)
+  if(!getUser())status.textContent='공고 DB 이용을 위해 로그인해 주세요.'
+  else load().then(()=>{if(!notices.length)void refresh()}).catch(async()=>{try{const response=await fetch('/api/bizinfo');const data=await parseJSON(response);if(!response.ok)throw Error();notices=data.items||[];redraw();status.textContent='DB 연결 실패 · 저장되지 않은 최신 공고를 표시합니다.'}catch{status.textContent='공고 DB와 기업마당 조회에 실패했습니다.'}})
  }
  function company(){
   if(!getUser())return toast('기업 프로필은 로그인 후 저장할 수 있습니다.')
