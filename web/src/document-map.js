@@ -175,6 +175,6 @@ export function splitSemanticBatches(targets,size=32){
 }
 export function isSemanticFillIntent(prompt){
  const p=String(prompt||'')
- if(/(?:요약|분석|검사|설명|찾아|검색|교정|맞춤법|차이)/.test(p)&&!/(?:채워|작성|완성|입력|생성)/.test(p))return false
+ if(/(?:요약|분석|검사|설명|찾아|검색|교정|맞춤법|차이)/.test(p)&&!/(?:채워|채우|작성해|작성해줘|완성해|입력해|생성해|기획해)/.test(p))return false
  return /(?:채워|채우|입력|기입|작성|완성|만들어|생성|제안|자동입력|자동\s*작성|기획)/.test(p)
 }

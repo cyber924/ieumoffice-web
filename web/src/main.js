@@ -219,7 +219,8 @@ $('aiForm').onsubmit=async e=>{
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
   // The dedicated six-field report engine is preserved; other forms use
   // semantic cell coordinates and a combined user-approved preview.
-  const report=isReportFillRequest(prompt)?captureBusinessReport(paper):null
+  const crossTableRequest=/모든\s*표|표\s*전체|문서\s*전체|전체\s*빈칸|모든\s*빈칸|양식\s*전체/.test(prompt) && paper.querySelectorAll('table').length>1
+  const report=!crossTableRequest&&isReportFillRequest(prompt)?captureBusinessReport(paper):null
   const reportMode=Boolean(report?.recognized)
   const semanticMode=!reportMode&&isSemanticFillIntent(prompt)
   const tableIntent=reportMode||semanticMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
