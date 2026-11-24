@@ -1,4 +1,5 @@
 import './styles.css'
+import {installMediaTools} from './media-tools.js'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
@@ -585,6 +586,8 @@ async function searchReferences(){
  }
 }
 installRibbon({paper,isImported:()=>Boolean(state),markDirty,toast,getCell,inspect:documentInspection,compare:compareHistory,searchAI:searchReferences})
+const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),markDirty,toast})
+window.addEventListener('milosoft:media-action',e=>mediaTools.open(e.detail?.kind))
 
 // Compact AI workspace shortcuts. All generation actions use existing login,
 // provider key controls, AI review, and explicit approval before document edits.

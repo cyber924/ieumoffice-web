@@ -10,7 +10,7 @@ const ribbon = {
     ['확대 +','zoomIn'],['축소 −','zoomOut'],['100%','zoomReset'],['눈금자 표시','ruler'],['편집 기호','marks']
   ],
   '입력': [
-    ['표 삽입','insertTable'],['오늘 날짜','today'],['구분선','hr'],['링크','link'],['글상자','box']
+    ['표 삽입','insertTable'],['오늘 날짜','today'],['구분선','hr'],['링크','link'],['글상자','box'],['그림','image'],['도형','shape'],['웹폰트','webFont'],['문자표','symbols']
   ],
   '서식': [
     ['굵게','bold'],['기울임','italic'],['밑줄','underline'],['왼쪽','alignLeft'],['가운데','alignCenter'],['오른쪽','right'],['양쪽','justify'],
@@ -197,6 +197,10 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
       case 'zoomReset':zoom=100;paper.style.zoom='100%';break
       case 'ruler':document.body.classList.toggle('show-ruler');break
       case 'marks':showMarks=!showMarks;paper.classList.toggle('show-marks',showMarks);break
+      case 'image':window.dispatchEvent(new CustomEvent('milosoft:media-action',{detail:{kind:'image'}}));break
+      case 'shape':window.dispatchEvent(new CustomEvent('milosoft:media-action',{detail:{kind:'shape'}}));break
+      case 'webFont':window.dispatchEvent(new CustomEvent('milosoft:media-action',{detail:{kind:'font'}}));break
+      case 'symbols':window.dispatchEvent(new CustomEvent('milosoft:media-action',{detail:{kind:'symbol'}}));break
       case 'today':insertMarkup(htmlEsc(new Date().toLocaleDateString('ko-KR')));break
       case 'hr':insertMarkup('<hr>');break
       case 'box':insertMarkup('<table><tbody><tr><td>내용을 입력하세요</td></tr></tbody></table><p><br></p>');break
