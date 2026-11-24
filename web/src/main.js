@@ -7,6 +7,8 @@ const paper=$('paper')
 const initial=paper.innerHTML
 let state=null
 let selectedModel='gpt'
+// BYOK keys intentionally remain only in this browser tab memory.
+const sessionKeys={gpt:'',gemini:'',claude:''}
 let cloudId=null
 let recentSelection=''
 let pendingProposal=''
@@ -176,7 +178,7 @@ $('aiForm').onsubmit=async e=>{
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:paper.innerText.slice(0,24000)})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:paper.innerText.slice(0,24000),providerKey:sessionKeys[selectedModel]||''})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     pendingProposal=String(data.suggestion||'')
@@ -206,6 +208,30 @@ async function loginDialog(){
   }
 }
 $('authButton').onclick=loginDialog
+// BYOK: never write provider keys to localStorage, Firestore, GitHub, or logs.
+$('aiSettings').onclick=async()=>{
+  openModal('<h2>AI 모델·API 키 설정</h2><p>API 키는 이 브라우저 탭의 메모리에만 보관됩니다. 새로고침하면 지워지며, AI 요청할 때만 암호화된 HTTPS 연결로 서버에 전달됩니다. 운영자 공용 키는 Vercel Secrets에 등록할 수 있습니다.</p><div id="keyFields"></div><div class="flex-buttons"><button type="button" id="saveKeys" class="primary">이 탭에 적용</button><button type="button" id="clearKeys">키 초기화</button><button type="button" id="checkServer">서버 연결 확인</button></div><p id="settingsStatus" role="status"></p>');
+  for(const [id,label] of [['gpt','GPT · OpenAI'],['gemini','Gemini · Google'],['claude','Claude · Anthropic']]){
+    const field=document.createElement('div');
+    const labelEl=document.createElement('label');labelEl.textContent=label;
+    const input=document.createElement('input');input.type='password';input.className='field';input.autocomplete='off';input.placeholder=sessionKeys[id]?'현재 탭에 키가 등록됨 · 변경할 때만 입력':'API 키 입력 (선택)';input.dataset.provider=id;input.maxLength=500;
+    field.append(labelEl,input);$('keyFields').append(field)
+  }
+  $('saveKeys').onclick=()=>{
+    for(const input of $('keyFields').querySelectorAll('input[data-provider]'))if(input.value.trim())sessionKeys[input.dataset.provider]=input.value.trim();
+    $('modal').close();toast('이 탭에 AI 키를 적용했습니다. 새로고침하면 삭제됩니다.')
+  };
+  $('clearKeys').onclick=()=>{for(const k of Object.keys(sessionKeys))sessionKeys[k]='';$('modal').close();toast('이 탭에 보관한 AI 키를 초기화했습니다.')};
+  $('checkServer').onclick=async()=>{
+    $('settingsStatus').textContent='확인 중…';
+    try{
+      const response=await fetch('/api/status',{cache:'no-store'});
+      if(!response.ok)throw Error('상태 API 연결 실패 ('+response.status+')');
+      const info=await response.json();
+      $('settingsStatus').textContent='서버 API: 정상 · 서버 제공 모델 키: '+Object.entries(info.providers||{}).map(([n,ok])=>n+' '+(ok?'등록됨':'미등록')).join(' / ')+' · 로그인: '+(user()?'접속됨':'필요');
+    }catch(e){$('settingsStatus').textContent=e.message}
+  }
+};
 $('cloudSave').onclick=async()=>{
   if(!isCloudReady())return toast('Firebase 환경 변수 연결 후 사용할 수 있습니다.')
   if(!user())return loginDialog()
@@ -230,6 +256,7 @@ const config={
   authDomain:import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
   appId:import.meta.env.VITE_FIREBASE_APP_ID,
+  messagingSenderId:import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   storageBucket:import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
 }
 initCloud(config,u=>{

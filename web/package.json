@@ -11,7 +11,8 @@
   "dependencies": {
     "jszip": "^3.10.1",
     "firebase": "^12.5.0",
-    "firebase-admin": "^13.6.0"
+    "firebase-admin": "^13.6.0",
+    "jose": "^6.1.0"
   },
   "devDependencies": {
     "vite": "^7.2.0"
