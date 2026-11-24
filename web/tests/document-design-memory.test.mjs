@@ -67,7 +67,7 @@ test('Template structure remains identical when values in right-side cells chang
  assert.equal(changed.canonical,record.canonical)
  assert.equal(changed.title,'새로 작성한 품의서')
 })
-test('Template memory is scoped by uid and does not include the user's filled content',()=>{
+test("Template memory is scoped by uid and does not include user's filled content",()=>{
  const paper=make('<table><tr><th>제목</th><td>비공개 회사 운영계획</td></tr><tr><th>작성자</th><td>이름</td></tr><tr><th>작성일</th><td>2026.11.24</td></tr></table>')
  const template=describeTemplate(paper,{title:'업무용 서식'})
  assert.equal(template.canonical.includes('비공개 회사 운영계획'),false)
