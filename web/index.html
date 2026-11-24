@@ -1,51 +1,45 @@
 <!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>이음오피스 WEB · 문서 편집 실험실</title>
-  <style>
-    :root{font-family:Inter,Pretendard,"Noto Sans KR",system-ui,sans-serif;color:#192336;background:#f6f8fb;font-size:13px}
-    *{box-sizing:border-box}body{margin:0}.top{height:58px;background:#fff;border-bottom:1px solid #e5eaf0;display:flex;align-items:center;gap:24px;padding:0 24px}
-    .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:16px;white-space:nowrap}.mark{height:29px;width:29px;border-radius:9px;background:#315fef;color:white;display:grid;place-items:center;font-weight:900}
-    .top nav{display:flex;gap:22px;color:#657388}.top .right{margin-left:auto;color:#64748b;font-size:12px}
-    .workspace{display:grid;grid-template-columns:300px minmax(0,1fr);height:calc(100vh - 58px)}aside{border-right:1px solid #e4eaf1;background:#fff;display:flex;flex-direction:column;min-height:0}
-    .aside-head{padding:20px 18px;border-bottom:1px solid #eef1f5}.eyebrow{color:#718096;font-size:11px;letter-spacing:.02em}.aside-head h2{font-size:14px;margin:6px 0 0}
-    .models{display:flex;gap:7px;margin-top:15px;flex-wrap:wrap}.models button{border:1px solid #dfe5ee;border-radius:8px;background:#fff;padding:8px 11px;font-size:12px;cursor:pointer}
-    .models button.selected{background:#eff3ff;border-color:#315fef;color:#315fef;font-weight:700}.messages{padding:18px;flex:1;overflow:auto}
-    .bubble{background:#f3f6fa;padding:13px;border-radius:11px;line-height:1.7;color:#526278}.chat-bottom{padding:14px;border-top:1px solid #eef1f5}
-    .chat-bottom textarea{width:100%;resize:vertical;min-height:85px;max-height:150px;background:#f9fafb;border:1px solid #e2e7ef;border-radius:10px;padding:12px;font:inherit}
-    .chat-bottom button,.primary{border:0;background:#315fef;color:white;border-radius:8px;padding:10px 13px;font-weight:600;cursor:pointer}
-    .chat-bottom p{color:#8794a4;font-size:11px;line-height:1.5}.main{overflow:auto}.bar{background:#fff;border-bottom:1px solid #e2e7ef;padding:12px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-    .bar select,.bar button,.bar label{font:inherit;background:#fff;border:1px solid #dce3ec;color:#293348;border-radius:7px;padding:8px 10px;cursor:pointer}.bar .primary{color:#fff;background:#315fef;border-color:#315fef}
-    .title{font-size:14px;font-weight:650;flex:1;min-width:140px}.hint{font-size:11px;color:#7c899c}
-    .editor-area{padding:30px 16px 60px;display:flex;justify-content:center}.paper{background:#fff;width:min(794px,100%);min-height:1050px;box-shadow:0 8px 34px #17223d13;border:1px solid #ebeff3;padding:70px 66px;line-height:1.7;outline:none;font-size:14px}
-    .paper h1{text-align:center;font-size:20px;margin:0 0 28px}.paper table{border-collapse:collapse;width:100%;margin:12px 0 22px}.paper td,.paper th{border:1px solid #778399;padding:8px;min-width:45px;height:35px}.paper th{background:#eff3f9}
-    .status{position:fixed;bottom:14px;right:20px;background:#fff;border:1px solid #e2e7ef;border-radius:30px;padding:7px 12px;color:#607085;font-size:11px;box-shadow:0 3px 12px #1d2d4b0d}
-    @media(max-width:900px){.workspace{grid-template-columns:225px minmax(0,1fr)}.paper{padding:35px 26px;min-height:700px}}
-    @media(max-width:620px){.workspace{display:flex;flex-direction:column;height:auto}aside{min-height:200px}.messages{display:none}.chat-bottom{display:none}.editor-area{padding:12px}.top nav{display:none}.paper{padding:28px 18px}.bar{padding:10px}}
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8fc">
+  <meta name="description" content="마일로소프트 — AI와 함께하는 워드·한글 문서 및 표 양식 웹 편집기">
+  <title>마일로소프트 | AI 문서 편집</title>
 </head>
 <body>
- <header class="top"><div class="brand"><span class="mark">이</span>이음오피스 <span style="font-size:10px;color:#315fef;background:#edf2ff;padding:4px 7px;border-radius:20px">WEB PREVIEW</span></div><nav><span>홈</span><span>내 문서</span><span>양식 편집</span></nav><span class="right">워드·한글 웹 전환 실험판</span></header>
- <section class="workspace"><aside><div class="aside-head"><div class="eyebrow">DOCUMENT ASSISTANT</div><h2>AI 도우미</h2><div class="models" id="models"><button class="selected" data-model="GPT">GPT</button><button data-model="Gemini">Gemini</button><button data-model="Claude">Claude</button></div></div>
- <div class="messages"><div class="bubble"><b>문서 편집을 시작하세요.</b><br>오른쪽에서 직접 표와 문장을 작성할 수 있습니다.<br><br>AI 모델 연결은 다음 개발 단계입니다. 현재 AI 요청은 전송되지 않습니다.</div></div>
- <div class="chat-bottom"><textarea placeholder="예: 현재 표를 유지하고 품의서 내용을 작성해 줘" id="prompt"></textarea><button id="ask">AI 연결 준비 중</button><p>AI 기능은 아직 비활성화 상태입니다. 서버 연결 전까지 입력 내용은 전송되지 않습니다.</p></div></aside>
- <main class="main"><div class="bar"><strong class="title">제목 없는 문서</strong><label for="upload">파일 열기</label><input id="upload" hidden type="file" accept=".html,.htm,.txt,.docx,.hwp,.hwpx"><button id="table">표 삽입</button><button id="row">행 추가</button><button id="bold">굵게</button><button id="undo">되돌리기</button><button id="download" class="primary">HTML 저장</button><span class="hint">DOCX·HWP/HWPX 입출력 엔진 이식 전</span></div>
- <div class="editor-area"><article id="paper" class="paper" contenteditable="true" spellcheck="false" aria-label="문서 편집 영역"><h1>새 문서</h1><p>이곳에서 문서를 작성하세요.</p><table><tbody><tr><th>항목</th><th>내용</th></tr><tr><td>제목</td><td><br></td></tr><tr><td>작성자</td><td><br></td></tr><tr><td>작성일</td><td><br></td></tr></tbody></table><p><br></p></article></div></main></section>
- <div class="status" id="status">브라우저에 임시 저장 · 원본 변환 기능 개발 전</div>
- <script>
- const editor=document.getElementById('paper'), status=document.getElementById('status');
- const initial=localStorage.getItem('ieumoffice-web-draft');if(initial)editor.innerHTML=initial;
- let saveTimer;editor.addEventListener('input',()=>{clearTimeout(saveTimer);saveTimer=setTimeout(()=>{localStorage.setItem('ieumoffice-web-draft',editor.innerHTML);status.textContent='이 브라우저에 임시 저장됨 · 서버 저장 아님'},400)});
- document.querySelectorAll('#models button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#models button').forEach(x=>x.classList.remove('selected'));b.classList.add('selected')});
- document.getElementById('ask').onclick=()=>alert('AI 연동은 다음 개발 단계입니다. 요청은 전송되지 않았습니다.');
- document.getElementById('bold').onclick=()=>{editor.focus();document.execCommand('bold')};
- document.getElementById('undo').onclick=()=>{editor.focus();document.execCommand('undo')};
- document.getElementById('table').onclick=()=>{editor.focus();document.execCommand('insertHTML',false,'<table><tbody><tr><th>항목</th><th>내용</th></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>')};
- document.getElementById('row').onclick=()=>{const s=getSelection(),cell=s&&s.anchorNode?.parentElement?.closest('td,th');const tr=cell?.closest('tr');if(!tr)return alert('표 안에 커서를 두고 다시 눌러주세요.');const copy=tr.cloneNode(true);copy.querySelectorAll('td,th').forEach(x=>x.innerHTML='<br>');tr.after(copy)};
- document.getElementById('upload').onchange=async(e)=>{const f=e.target.files[0];if(!f)return;if(/\.(docx|hwp|hwpx)$/i.test(f.name)){alert('DOCX·HWP·HWPX 파일은 원본 엔진을 웹으로 옮긴 뒤 지원합니다. 현재 파일은 읽거나 수정하지 않았습니다.');e.target.value='';return}const t=await f.text();if(/\.html?$/i.test(f.name)){const doc=new DOMParser().parseFromString(t,'text/html');doc.querySelectorAll('script,iframe,object,embed,form').forEach(x=>x.remove());doc.querySelectorAll('*').forEach(x=>{for(const attr of [...x.attributes])if(/^on/i.test(attr.name)||((attr.name==='href'||attr.name==='src')&&/^javascript:/i.test(attr.value)))x.removeAttribute(attr.name)});editor.innerHTML=doc.body.innerHTML}else editor.textContent=t;document.querySelector('.title').textContent=f.name;editor.dispatchEvent(new Event('input'))};
- document.getElementById('download').onclick=()=>{const body='<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>이음오피스 문서</title></head><body>'+editor.innerHTML+'</body></html>';const url=URL.createObjectURL(new Blob([body],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='ieumoffice-document.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
- </script>
-</body>
-</html>
+<header class="app-header">
+  <div class="logo"><span class="logo-icon">M</span><span>마일로소프트</span><span class="beta">WEB BETA</span></div>
+  <div class="document-title"><input id="filename" value="제목 없는 문서" aria-label="문서 이름" maxlength="120"><span id="filetype" class="pill">DOCX</span></div>
+  <div class="header-actions"><button type="button" class="text-button" id="newDocument">새 문서</button><button type="button" class="text-button" id="templates">양식</button><button type="button" class="text-button" id="myDocuments">내 문서</button><button type="button" id="authButton" class="outline">로그인 설정 전</button></div>
+</header>
+<div class="main-layout">
+ <aside class="ai-panel">
+   <div class="panel-head"><div class="overline">DOCUMENT ASSISTANT</div><div class="panel-title">AI 도우미 <button type="button" id="toggleAI" title="AI 패널 닫기">−</button></div><p>작업할 문서를 설명하거나 수정할 부분을 요청하세요.</p></div>
+   <div class="models" role="group" aria-label="AI 모델 선택">
+     <button type="button" class="active" data-model="gpt">GPT</button><button type="button" data-model="gemini">Gemini</button><button type="button" data-model="claude">Claude</button>
+   </div>
+   <div class="messages" id="messages" aria-live="polite"><div class="assistant-message"><b>안녕하세요 👋</b><p>문서의 내용을 선택한 뒤 AI에게 수정 요청을 보낼 수 있습니다. 모델을 사용하려면 관리자가 인증과 API 연결을 설정해야 합니다.</p></div></div>
+   <form id="aiForm" class="composer"><label for="aiPrompt" class="overline">AI 요청</label><textarea id="aiPrompt" rows="4" placeholder="예: 표의 빈칸을 채워 줘. 결재란은 그대로 유지해 줘."></textarea><div class="composer-bottom"><span id="aiStatus">연결 확인 중</span><button type="submit" class="primary" id="aiSend">작성 요청</button></div></form>
+   <div class="ai-preview" id="aiPreview" hidden><b>AI 제안 미리보기</b><p id="aiPreviewText"></p><div class="flex-buttons"><button id="aiReject" type="button">취소</button><button id="aiApply" type="button" class="primary">문서에 적용</button></div></div>
+ </aside>
+ <main class="editor-shell" id="editorShell">
+   <div class="toolbar" role="toolbar" aria-label="문서 편집 도구">
+     <label class="btn-file">파일 열기<input type="file" id="fileInput" accept=".docx,.hwp,.hwpx,.txt" hidden></label>
+     <button type="button" id="saveFile" class="primary">DOCX 저장</button><span class="tool-divider"></span>
+     <button type="button" id="undo" title="되돌리기">↶</button><button type="button" id="redo" title="다시 실행">↷</button><button type="button" id="bold" title="굵게"><b>B</b></button>
+     <button type="button" id="italic" title="기울임"><em>I</em></button><button type="button" id="underline" title="밑줄"><u>U</u></button>
+     <button type="button" id="alignLeft" title="왼쪽 정렬">≡</button><button type="button" id="alignCenter" title="가운데 정렬">☷</button>
+     <span class="tool-divider"></span><button type="button" id="insertTable">표 삽입</button><button type="button" id="addRow">행 추가</button><button type="button" id="addColumn">열 추가</button><button type="button" id="mergeCells">셀 병합</button>
+     <span class="tool-divider"></span><button type="button" id="printDoc">인쇄</button><button type="button" id="cloudSave" title="Firebase 연결 후 사용">클라우드 저장</button>
+   </div>
+   <div class="notice-bar" id="noticeBar">DOCX·HWPX는 양식을 유지하는 제한적 편집 모드입니다. 복잡한 원본은 사본으로 테스트하세요. 구형 HWP 파일은 웹 변환 준비 중입니다.</div>
+   <div class="paper-wrap"><article id="paper" class="paper" contenteditable="true" role="textbox" aria-multiline="true" aria-label="문서 본문" spellcheck="false"><h1>새 문서</h1><p>이곳에서 문서를 작성하세요.</p><table><tbody><tr><th>항목</th><th>내용</th></tr><tr><td>제목</td><td><br></td></tr><tr><td>작성자</td><td><br></td></tr><tr><td>작성일</td><td><br></td></tr></tbody></table><p><br></p></article></div>
+   <div class="editor-status"><span id="saveStatus">로컬 임시 저장 준비</span><span id="wordCount">0자</span><span> A4 · 화면 미리보기</span></div>
+ </main>
+</div>
+<dialog id="modal"><div id="modalContent"></div><button class="modal-close" id="closeModal" type="button">닫기</button></dialog>
+<footer class="source-credit">기반 기술: <a href="https://github.com/pblsketch/ieumoffice" target="_blank" rel="noopener noreferrer">IeumOffice</a> / <a href="https://github.com/genspark-ai/genoffice" target="_blank" rel="noopener noreferrer">GenOffice</a> (Apache-2.0). 마일로소프트는 별도 웹 실험 프로젝트입니다.</footer>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<script type="module" src="/src/main.js"></script>
+</body></html>
