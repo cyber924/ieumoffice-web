@@ -18,7 +18,7 @@ export function captureTableTargets(root, preferredCell = null) {
         (rowIndex === 0 && cells.some(c => isHeader(read(c))))
       cells.forEach((cell, columnIndex) => {
         const selected = preferredCell === cell
-        const editable = selected || (!header && (labeled ? columnIndex === 1 : !first && cells.length > 1 ? false : columnIndex > 0 && cells.length > 2 && rowIndex > 0))
+        const editable = !header && (selected || (labeled ? columnIndex === 1 : first && cells.length > 2 && columnIndex > 0 && rowIndex > 0))
         if (!editable) return
         const cellId = `t${tableIndex}r${rowIndex}c${columnIndex}`
         const record = {

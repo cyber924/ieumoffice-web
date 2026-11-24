@@ -192,6 +192,7 @@ $('aiForm').onsubmit=async e=>{
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
     pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,rawEdits):[]
     pendingProposal=String(data.suggestion||'')
+    $('aiApply').disabled = Boolean(requestedTableFill && !pendingTableEdits.length)
     if(pendingTableEdits.length){
       const description=pendingTableEdits.map(e=>e.label+' : '+(e.before||'(빈칸)')+' → '+e.value).join('\n')
       addMessage('assistant','표 '+pendingTableEdits.length+'개 셀에 입력할 내용을 준비했습니다. 아래 미리보기에서 확인해 주세요.\n'+description)
@@ -200,6 +201,7 @@ $('aiForm').onsubmit=async e=>{
     }else{
       addMessage('assistant',pendingProposal||'일치하는 표 입력값을 찾지 못했어요. 수정할 셀을 먼저 선택하거나 내용을 구체적으로 요청해 주세요.')
       $('aiPreviewText').textContent=pendingProposal||'표 구조를 보호하기 위해 변경하지 않았습니다.'
+      if(requestedTableFill)pendingProposal=''
       $('aiApply').textContent='문서에 적용'
     }
     $('aiPreview').hidden=false

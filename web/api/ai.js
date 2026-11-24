@@ -50,7 +50,7 @@ export default async function handler(req,res){
   const data=req.body||{}
   if(!['gpt','gemini','claude'].includes(data.model))return res.status(400).json({error:'지원하지 않는 AI 모델입니다.'})
   const mode=data.mode==='table'?'table':'text'
-  const tableCells=Array.isArray(data.tableCells)?data.tableCells.slice(0,100).filter(x=>/^t\\d+r\\d+c\\d+$/.test(x?.cellId||'')).map(x=>({cellId:x.cellId,label:useText(x.label).slice(0,100),current:useText(x.current).slice(0,300)})):[]
+  const tableCells=Array.isArray(data.tableCells)?data.tableCells.slice(0,100).filter(x=>/^t\d+r\d+c\d+$/.test(x?.cellId||'')).map(x=>({cellId:x.cellId,label:useText(x.label).slice(0,100),current:useText(x.current).slice(0,300)})):[]
   const payload={model:data.model,mode,prompt:useText(data.prompt).slice(0,4000),selectedText:useText(data.selectedText).slice(0,8000),documentText:useText(data.documentText).slice(0,24000),tableCells}
   const providerKey=useText(data.providerKey)
   if(!payload.prompt)return res.status(400).json({error:'AI 지시를 입력해 주세요.'})
