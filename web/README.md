@@ -37,3 +37,18 @@ Firebase Firestore 규칙은 users/{uid}/documents/{id} 경로를 본인만 읽�
 AI 서버는 Firebase ID 토큰을 Google 공개 JWKS로 확인합니다. FIREBASE_PROJECT_ID만 있으면 토큰 검증이 가능하며 서비스 계정 개인 키가 필수는 아닙니다. AI 요청에 계정별 영구 할당량·예산 통제는 아직 구현되지 않았으므로 공개 운영 전 필수입니다.
 
 Firebase Authentication의 이메일/비밀번호 활성화, Firebase Authorized Domains, Firestore/Storage 규칙은 Firebase 콘솔에서 별도 설정해야 합니다. 클라우드 저장이 성공했다고 주장하기 전에 직접 로그인·저장·읽기 교차 검증해야 합니다.
+
+
+## 문서 데이터 저장 V3
+
+- Firestore users/{uid}/documents/{docId}: 현재 버전 메타데이터, 제목, 검색용 본문 앞 7,500자, 문자/표 통계
+- Firestore users/{uid}/documents/{docId}/revisions/{revisionId}: 변경 이력과 파일 경로
+- 같은 revision 아래 texts/{chunkId}와 cells/{chunkId}: 문서 전체 텍스트(10,000글자 단위), 표 셀 데이터(35개 단위)
+- Storage user-files/{uid}/{docId}/{revisionId}_{fileName}: 최종 DOCX/HWPX, 덮어쓰지 않는 불변 파일 버전
+- 한 번의 Firestore batch로 현재 문서 + 버전 메타데이터 + 색인 데이터를 기록. Storage 업로드 이후 DB 기록이 완료되어야 저장 완료 표시
+- 내 문서: 제목·검색용 본문 미리보기 검색, 이전 버전 불러오기, AI 참고 문서 선택(최대 3개)
+- AI 참고 문서는 동일한 사용자 소유 문서만 읽으며, 선택할 때만 AI 프롬프트에 전달. 이것은 모델 자체 학습이 아니라 일회성 검색 증강 문맥 제공이다.
+
+**중요:** firestore/firestore.rules에 새 보안 규칙을 게시하지 않으면 이 버전 저장 기능이 permission-denied로 실패합니다. 기존 파일 삭제는 제공하지 않습니다. 15MB 파일 제한과 본문 16만 글자/표 셀 1,800개 제한이 있습니다.
+
+파일 업로드와 Firestore batch는 서로 원자적 트랜잭션이 아니므로 네트워크 중단 시 드물게 고아 파일이나 오판정이 발생할 수 있습니다. 운영 단계에서는 서버 측 정리 작업과 정합성 검사가 추가로 필요합니다.

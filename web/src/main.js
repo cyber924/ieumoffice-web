@@ -1,7 +1,7 @@
 import './styles.css'
 import {captureTableTargets,validateTableEdits,applyTableEdits} from './table-ai.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -11,6 +11,9 @@ let selectedModel='gpt'
 // BYOK keys intentionally remain only in this browser tab memory.
 const sessionKeys={gpt:'',gemini:'',claude:''}
 let cloudId=null
+let referenceDocuments=[]
+let referenceSnapshot=[]
+let cloudSaveRunning=false
 let recentSelection=''
 let pendingProposal=''
 let pendingTableEdits=[]
@@ -93,7 +96,7 @@ $('mergeCells').onclick=()=>{
 }
 $('newDocument').onclick=()=>{
   if(dirty&&!confirm('새 문서를 만들까요? 저장하지 않은 현재 변경 내용은 사라질 수 있습니다.'))return
-  state=null;cloudId=null;lastFocusedCell=null
+  state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[]
   paper.innerHTML=initial;$('filename').value='제목 없는 문서'
   localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();setStatus('새 문서 준비 완료')
 }
@@ -127,7 +130,7 @@ async function loadFile(file){
       state=parsed;paper.innerHTML=parsed.html
     }catch(e){setStatus('파일 열기 실패');return toast(e.message)}
   }
-  cloudId=null;$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
+  cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
   dirty=false;updateMode();updateWords();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
   toast('파일을 열었습니다. 복잡한 서식은 저장 후 확인하세요.')
 }
@@ -154,7 +157,7 @@ $('templates').onclick=()=>{
     const btn=document.createElement('button');btn.textContent=name
     btn.onclick=()=>{
       if(dirty&&!confirm('현재 문서를 새 양식으로 교체할까요?'))return
-      state=null;cloudId=null
+      state=null;cloudId=null;referenceDocuments=[]
       paper.innerHTML='<h1>'+name+'</h1><table><tbody>'+rows.map((r,i)=>'<tr><th>'+r+'</th><td><br></td></tr>').join('')+'</tbody></table><p><br></p>'
       $('filename').value=name;updateMode();markDirty();$('modal').close()
     }
@@ -178,6 +181,9 @@ $('aiForm').onsubmit=async e=>{
   const authToken=await token()
   if(!authToken)return toast('AI 기능은 Firebase 로그인 및 서버 API 키 설정 후 사용할 수 있습니다.')
   const selectedText=recentSelection||''
+  // Only explicitly selected, authenticated user's documents become AI context.
+  const selectedReferences=referenceSnapshot.slice(0,3)
+  const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
   const tableIntent=/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
   const snapshot=tableIntent?captureTableTargets(paper,getCell()):null
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
@@ -186,7 +192,7 @@ $('aiForm').onsubmit=async e=>{
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:paper.innerText.slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?'table':'text'})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?'table':'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
@@ -260,22 +266,142 @@ $('aiSettings').onclick=async()=>{
     }catch(e){$('settingsStatus').textContent=e.message}
   }
 };
-$('cloudSave').onclick=async()=>{
-  if(!isCloudReady())return toast('Firebase 환경 변수 연결 후 사용할 수 있습니다.')
+async function saveCurrentCloud() {
+  if(!isCloudReady())return toast('Firebase 설정을 확인해 주세요.')
   if(!user())return loginDialog()
-  try{setStatus('클라우드 저장 중…');const blob=await blobForSave();cloudId=await saveCloud(safeFilename(fileName(),state?.type||'docx'),blob,state?.type||'docx',cloudId);setStatus('클라우드 저장 완료');toast('내 문서에 저장했습니다.')}
-  catch(e){setStatus('클라우드 저장 실패');toast(e.message)}
+  if(cloudSaveRunning)return
+  cloudSaveRunning=true
+  const button=$('cloudSave')
+  button.disabled=true
+  const beforeRevision=cloudId
+  try{
+    setStatus('파일과 검색 데이터 저장 중…')
+    const documentData=extractDocumentData(paper)
+    const blob=await blobForSave()
+    const result=await saveCloud(safeFilename(fileName(),state?.type||'docx'),blob,state?.type||'docx',cloudId,documentData)
+    cloudId=result.id
+    dirty=false
+    setStatus('Storage + Firestore 저장 완료 · 버전 '+result.revisionNumber)
+    toast('문서·표 데이터 및 파일 버전 저장 완료')
+  }catch(err){
+    cloudId=beforeRevision
+    setStatus('클라우드 저장 실패 · 문서는 편집기에 유지됨')
+    toast('저장되지 않았습니다: '+err.message)
+  }finally{
+    cloudSaveRunning=false
+    button.disabled=false
+  }
 }
-$('myDocuments').onclick=async()=>{
+$('cloudSave').onclick=saveCurrentCloud
+
+function dateText(value){
+  if(!value)return '날짜 미상'
+  const d=value.toDate?.()||new Date(value.seconds?value.seconds*1000:value)
+  return Number.isNaN(d.getTime())?'날짜 미상':d.toLocaleString('ko-KR')
+}
+function renderDocumentRows(rows){
+  const list=$('documentsList')
+  if(!list)return
+  list.replaceChildren()
+  if(!rows.length){list.textContent='해당하는 문서가 없습니다.';return}
+  for(const row of rows){
+    const item=document.createElement('div');item.className='cloud-document'
+    const caption=document.createElement('div');caption.className='cloud-document-info'
+    const title=document.createElement('strong');title.textContent=row.name||'이름 없는 문서'
+    const info=document.createElement('small')
+    info.textContent=(row.kind||'DOCX').toUpperCase()+' · '+(row.charCount||0)+'자 · '+(row.tableCount||0)+'개 표 · '+dateText(row.updatedAt)
+    const preview=document.createElement('small')
+    preview.textContent=(row.textPreview||'').replace(/\s+/g,' ').slice(0,90)
+    caption.append(title,info,preview)
+    const controls=document.createElement('div');controls.className='cloud-document-actions'
+    const open=document.createElement('button');open.textContent='열기'
+    open.onclick=async()=>{
+      if(dirty&&!confirm('저장하지 않은 문서 수정 내용을 버리고 다른 문서를 열까요?'))return
+      open.disabled=true
+      try{
+        const f=await loadCloud(row)
+        await loadFile(f)
+        cloudId=row.id
+        $('modal').close()
+        toast('저장 문서를 열었습니다.')
+      }catch(err){toast('문서를 열지 못했습니다: '+err.message)}
+      finally{open.disabled=false}
+    }
+    const versions=document.createElement('button');versions.textContent='버전'
+    versions.onclick=()=>showVersions(row)
+    const reference=document.createElement('button')
+    reference.textContent=referenceDocuments.includes(row.id)?'AI 참고 해제':'AI 참고'
+    reference.onclick=async()=>{
+      if(referenceDocuments.includes(row.id)){
+        referenceDocuments=referenceDocuments.filter(id=>id!==row.id)
+        referenceSnapshot=referenceSnapshot.filter(x=>x.id!==row.id)
+        toast('AI 참고 문서에서 제외했습니다.')
+      }else{
+        if(referenceDocuments.length>=3)return toast('AI 참고 문서는 최대 3개까지 선택할 수 있습니다.')
+        reference.disabled=true
+        try{
+          const text=await readCloudIndexed(row)
+          if(!text)return toast('선택한 문서에는 검색 가능한 본문 데이터가 없습니다.')
+          referenceDocuments.push(row.id)
+          referenceSnapshot.push({id:row.id,name:row.name,text})
+          toast('이 문서를 AI 참고 자료에 추가했습니다.')
+        }catch(err){toast(err.message)}
+        finally{reference.disabled=false}
+      }
+      reference.textContent=referenceDocuments.includes(row.id)?'AI 참고 해제':'AI 참고'
+      const indicator=$('referenceCount')
+      if(indicator)indicator.textContent='AI 참고 문서 '+referenceDocuments.length+'개 선택됨'
+    }
+    controls.append(open,versions,reference)
+    item.append(caption,controls)
+    list.append(item)
+  }
+}
+let cloudRows=[]
+async function showCloudDocuments(){
   if(!isCloudReady())return toast('Firebase 연결 후 내 문서를 사용할 수 있습니다.')
   if(!user())return loginDialog()
-  openModal('<h2>내 문서</h2><p>Firebase에 저장된 문서입니다.</p><div id="documentsList">목록 조회 중…</div>')
+  openModal('<h2>내 문서 검색·재활용</h2><p>Firestore에 저장된 본문 일부와 제목으로 검색하고, 이전 파일 버전을 선택하거나 AI 참고 문서로 지정할 수 있습니다.</p><input id="documentSearch" class="field" type="search" placeholder="제목·문서 내용 검색" aria-label="문서 검색"><p id="referenceCount">AI 참고 문서 '+referenceDocuments.length+'개 선택됨</p><div id="documentsList">목록을 조회하고 있습니다…</div>')
   try{
-    const rows=await listCloud(),list=$('documentsList')
-    list.replaceChildren()
-    if(!rows.length){list.textContent='저장된 문서가 없습니다.';return}
-    for(const row of rows){const b=document.createElement('button');b.className='field';b.style.textAlign='left';b.textContent=row.name+' · '+Math.round((row.size||0)/1024)+'KB';b.onclick=async()=>{try{const f=await loadCloud(row);await loadFile(f);cloudId=row.id;$('modal').close()}catch(err){toast(err.message)}};list.append(b)}
-  }catch(err){$('documentsList').textContent='목록 조회 실패: '+err.message}
+    cloudRows=await listCloud()
+    if(!$('documentSearch'))return
+    const search=()=>{
+      const term=$('documentSearch').value.trim().toLocaleLowerCase()
+      renderDocumentRows(cloudRows.filter(r=>!term||(r.name||'').toLocaleLowerCase().includes(term)||(r.textPreview||'').toLocaleLowerCase().includes(term)))
+    }
+    $('documentSearch').addEventListener('input',search)
+    search()
+  }catch(err){
+    if($('documentsList'))$('documentsList').textContent='문서 조회 실패: '+err.message
+  }
+}
+$('myDocuments').onclick=showCloudDocuments
+async function showVersions(row){
+  openModal('<h2>문서 버전 복원</h2><p>선택한 버전을 편집기로 가져옵니다. 복원 후 클라우드 저장을 누르면 새 버전이 만들어집니다. 기존 파일은 삭제되지 않습니다.</p><div id="versionList">버전 조회 중…</div>')
+  try{
+    let versions=await listRevisions(row.id)
+    if(!versions.length)versions=[{id:'legacy',path:row.path,name:row.name,revisionNumber:row.revisionNumber||1,savedAt:row.updatedAt}]
+    if(!$('versionList'))return
+    const list=$('versionList');list.replaceChildren()
+    for(const version of versions){
+      const button=document.createElement('button')
+      button.className='field'
+      button.textContent='버전 '+(version.revisionNumber||'?')+' · '+dateText(version.savedAt)+' · '+(version.name||row.name)
+      button.onclick=async()=>{
+        if(dirty&&!confirm('저장되지 않은 현재 작업을 버리고 이 버전을 복원할까요?'))return
+        button.disabled=true
+        try{
+          const f=await loadCloud({...version,name:version.name||row.name})
+          await loadFile(f)
+          cloudId=row.id
+          $('modal').close()
+          toast('이전 버전을 불러왔습니다. 저장하면 새 버전이 됩니다.')
+        }catch(err){toast('복원 실패: '+err.message)}
+        finally{button.disabled=false}
+      }
+      list.append(button)
+    }
+  }catch(err){if($('versionList'))$('versionList').textContent='버전 조회 실패: '+err.message}
 }
 $('toggleAI').onclick=()=>{document.body.classList.add('ai-hidden');toast('AI 패널 숨김 · 새로고침하면 다시 표시됩니다.')}
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}})
@@ -289,6 +415,7 @@ const config={
 }
 initCloud(config,u=>{
   $('authButton').textContent=u?.email||'로그인'
+  if(!u){referenceDocuments=[];referenceSnapshot=[];cloudId=null}
   $('aiStatus').textContent=u?'연결 상태 확인':'로그인 후 AI 사용'
 }).then(connected=>{if(!connected)$('aiStatus').textContent='AI·Firebase 설정 전'}).catch(e=>{console.warn('Firebase configuration unavailable',e.message);$('aiStatus').textContent='연결 설정 오류'})
 restoreDraft()

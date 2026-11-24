@@ -1,23 +1,88 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function owner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
     match /users/{userId}/documents/{documentId} {
-      function owner() {
-        return request.auth != null && request.auth.uid == userId;
-      }
-      function validDocument() {
+      function validMain() {
         let d = request.resource.data;
-        return d.keys().hasOnly(['name', 'kind', 'path', 'size', 'updatedAt'])
-          && d.keys().hasAll(['name', 'kind', 'path', 'size', 'updatedAt'])
+        return d.keys().hasOnly([
+            'name','kind','path','size','updatedAt','createdAt',
+            'revisionId','revisionNumber','textPreview','charCount','tableCount'
+          ])
+          && d.keys().hasAll([
+            'name','kind','path','size','updatedAt','createdAt',
+            'revisionId','revisionNumber','textPreview','charCount','tableCount'
+          ])
           && d.name is string && d.name.size() > 0 && d.name.size() <= 150
-          && d.kind in ['docx', 'hwpx']
+          && d.kind in ['docx','hwpx']
+          && d.path is string
+          && d.path.matches('^user-files/' + userId + '/' + documentId + '/[^/]+[.](docx|hwpx)$')
           && d.size is int && d.size >= 0 && d.size <= 15 * 1024 * 1024
-          && d.updatedAt is timestamp && d.path is string
-          && d.path.matches('^user-files/' + userId + '/' + documentId + '/[^/]+$');
+          && d.updatedAt is timestamp && d.createdAt is timestamp
+          && d.revisionId is string && d.revisionId.matches('^v_[0-9a-f]{32}$')
+          && d.revisionNumber is int && d.revisionNumber >= 1
+          && d.textPreview is string && d.textPreview.size() <= 7500
+          && d.charCount is int && d.charCount >= 0 && d.charCount <= 160000
+          && d.tableCount is int && d.tableCount >= 0 && d.tableCount <= 300;
       }
-      allow read: if owner();
-      allow create, update: if owner() && validDocument();
-      allow delete: if owner();
+      allow read: if owner(userId);
+      allow create, update: if owner(userId) && validMain();
+      allow delete: if owner(userId);
+
+      match /revisions/{revisionId} {
+        function validRevision() {
+          let d = request.resource.data;
+          return d.keys().hasOnly([
+              'name','kind','path','size','savedAt',
+              'revisionNumber','charCount','tableCount','tables'
+            ])
+            && d.keys().hasAll([
+              'name','kind','path','size','savedAt',
+              'revisionNumber','charCount','tableCount','tables'
+            ])
+            && d.name is string && d.name.size() > 0 && d.name.size() <= 150
+            && d.kind in ['docx','hwpx']
+            && d.path is string
+            && d.path.matches('^user-files/' + userId + '/' + documentId + '/' + revisionId + '_[^/]+[.](docx|hwpx)$')
+            && d.size is int && d.size >= 0 && d.size <= 15 * 1024 * 1024
+            && d.savedAt is timestamp
+            && d.revisionNumber is int && d.revisionNumber >= 1
+            && d.charCount is int && d.charCount >= 0 && d.charCount <= 160000
+            && d.tableCount is int && d.tableCount >= 0 && d.tableCount <= 300
+            && d.tables is list && d.tables.size() <= 60;
+        }
+        allow read: if owner(userId);
+        allow create: if owner(userId)
+          && revisionId.matches('^v_[0-9a-f]{32}$') && validRevision();
+        allow update, delete: if false;
+
+        match /texts/{textChunk} {
+          allow read: if owner(userId);
+          allow create: if owner(userId)
+            && request.resource.data.keys().hasOnly(['index','text'])
+            && request.resource.data.keys().hasAll(['index','text'])
+            && request.resource.data.index is int
+            && request.resource.data.index >= 0
+            && request.resource.data.index <= 100
+            && request.resource.data.text is string
+            && request.resource.data.text.size() <= 10000;
+          allow update, delete: if false;
+        }
+        match /cells/{cellChunk} {
+          allow read: if owner(userId);
+          allow create: if owner(userId)
+            && request.resource.data.keys().hasOnly(['index','cells'])
+            && request.resource.data.keys().hasAll(['index','cells'])
+            && request.resource.data.index is int
+            && request.resource.data.index >= 0
+            && request.resource.data.index <= 100
+            && request.resource.data.cells is list
+            && request.resource.data.cells.size() <= 35;
+          allow update, delete: if false;
+        }
+      }
     }
   }
 }
