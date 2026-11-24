@@ -203,7 +203,7 @@ $('aiForm').onsubmit=async e=>{
   const selectedReferences=referenceSnapshot.slice(0,3)
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
   const tableIntent=/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
-  const snapshot=tableIntent?captureTableTargets(paper,getCell()):null
+  const snapshot=tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
@@ -212,6 +212,18 @@ $('aiForm').onsubmit=async e=>{
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
+    // Explicit logical table coordinates require no model guessing: user-provided values are validated locally.
+    if(requestedTableFill && directEdits.length && /표\s*\d+\s*\d+\s*행\s*\d+\s*열\s*[:：=]/.test(prompt)){
+      pendingTableEdits=validateTableEdits(pendingTableSnapshot,directEdits)
+      pendingProposal=''
+      $('aiApply').disabled=pendingTableEdits.length===0
+      const preview=pendingTableEdits.map(e=>e.label+' : (빈칸) → '+e.value).join('\n')
+      $('aiPreviewText').textContent=preview||'유효한 빈 셀을 찾지 못했습니다.'
+      $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
+      addMessage('assistant',pendingTableEdits.length+'개 표 셀을 지정 좌표로 확인했습니다. 미리보기를 확인하고 적용하세요.')
+      $('aiPreview').hidden=false
+      return
+    }
     const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?'table':'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
@@ -233,7 +245,19 @@ $('aiForm').onsubmit=async e=>{
       $('aiApply').textContent='문서에 적용'
     }
     $('aiPreview').hidden=false
-  }catch(err){addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)}
+  }catch(err){
+    if(requestedTableFill && directEdits.length){
+      pendingTableEdits=validateTableEdits(pendingTableSnapshot,directEdits)
+      if(pendingTableEdits.length){
+        const preview=pendingTableEdits.map(e=>e.label+' : (빈칸) → '+e.value).join('\n')
+        $('aiPreviewText').textContent=preview
+        $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
+        $('aiApply').disabled=false
+        $('aiPreview').hidden=false
+        addMessage('assistant','AI 호출 실패. 다만 사용자가 지정한 '+pendingTableEdits.length+'개 셀 값은 미리보기로 준비했습니다. 확인 후 적용할 수 있습니다.')
+      }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
+    }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
+  }
   finally{$('aiStatus').textContent='AI 연결';$('aiSend').disabled=false}
 }
 $('aiReject').onclick=()=>{$('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null}
