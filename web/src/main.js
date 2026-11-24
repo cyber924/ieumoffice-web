@@ -10,6 +10,8 @@ import {readReportProfile,saveReportProfile,reportToday,proposeReportDefaults,mi
 import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
 import {DESIGN_PRESETS,analyzeDocumentDesign,validateDesignPlan,designPreview,applyDocumentDesign} from './document-design.js'
 import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} from './template-memory.js'
+import {installMiloSuite} from './milo-suite.js'
+import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory} from './cloud.js'
 
@@ -228,6 +230,8 @@ $('aiForm').onsubmit=async e=>{
   // Only explicitly selected, authenticated user's documents become AI context.
   const selectedReferences=referenceSnapshot.slice(0,3)
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
+  const businessProfile=user()?profileContext(loadProfile(user().uid,localStorage)):''
+  const businessContext=businessProfile?'\n\n[사용자 등록 기업 정보 - 실제 정보 확인 필요]\n'+businessProfile.slice(0,1800):''
   // The dedicated six-field report engine is preserved; other forms use
   // semantic cell coordinates and a combined user-approved preview.
   const crossTableRequest=/모든\s*표|표\s*전체|문서\s*전체|전체\s*빈칸|모든\s*빈칸|양식\s*전체/.test(prompt) && paper.querySelectorAll('table').length>1
@@ -274,7 +278,7 @@ $('aiForm').onsubmit=async e=>{
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
               model:selectedModel,mode:'labeled',prompt,selectedText,
-              documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
           const data=await response.json()
@@ -324,7 +328,7 @@ $('aiForm').onsubmit=async e=>{
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
               model:selectedModel,mode:'semantic',prompt,
-              selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
           const data=await response.json()
@@ -359,7 +363,7 @@ $('aiForm').onsubmit=async e=>{
         (warnings.length?' '+warnings.join(' '):''))
       return
     }
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
@@ -825,6 +829,15 @@ const convertToDocxCopy=(kind)=>{
   return true
 }
 const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
+installMiloSuite({
+ paper,toast,markDirty,openModal,convertToDocxCopy,
+ getUser:user,getToken:token,getModel:()=>selectedModel,
+ getProviderKey:()=>sessionKeys[selectedModel]||'',
+ setFilename:name=>{$('filename').value=name},
+ setPrompt:value=>{$('aiPrompt').value=value;$('aiPrompt').focus()},
+ fileName
+})
+
 window.addEventListener('milosoft:media-action',e=>mediaTools.open(e.detail?.kind))
 
 // Compact AI workspace shortcuts. All generation actions use existing login,
