@@ -3,6 +3,7 @@ import JSZip from 'jszip'
 // The document producer keeps every editor table as a real OOXML w:tbl block.
 // It also traverses pasted container elements, which the previous flat export missed.
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+let imageContext=[]
 const xmlEscape = value => String(value ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;')
 const text = node => String(node?.innerText ?? node?.textContent ?? '')
 const local = node => (node?.localName || '').replace(/^.*:/,'').toLowerCase()
@@ -49,6 +50,26 @@ function parseStyle(node,prior){
  }
  return s
 }
+function drawingXml(src,width=420,height=220){
+ if(!/^data:image\/(png|jpeg);base64,[a-zA-Z0-9+/=]+$/.test(src||''))return ''
+ if(imageContext.length>=25)return ''
+ const id=imageContext.length+1
+ const mime=src.match(/^data:image\/(png|jpeg)/)[1]
+ const ext=mime==='jpeg'?'jpg':'png'
+ const filename='image'+id+'.'+ext
+ const relationship='rIdImage'+id
+ const w=clamp(Number(width)||420,20,650)*9525
+ const h=clamp(Number(height)||220,20,850)*9525
+ imageContext.push({src,filename,relationship,ext,id})
+ return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'+
+ '<wp:extent cx="'+w+'" cy="'+h+'"/><wp:docPr id="'+id+'" name="MiloSoft Image '+id+'"/>'+
+ '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'+
+ '<pic:pic><pic:nvPicPr><pic:cNvPr id="'+id+'" name="'+filename+'"/><pic:cNvPicPr/></pic:nvPicPr>'+
+ '<pic:blipFill><a:blip r:embed="'+relationship+'"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'+
+ '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="'+w+'" cy="'+h+'"/></a:xfrm>'+
+ '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'+
+ '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+}
 function inline(node,style={}){
  if(node.nodeType===3){
   const value=node.nodeValue||''
@@ -57,6 +78,7 @@ function inline(node,style={}){
  if(node.nodeType!==1)return ''
  const tag=local(node)
  if(tag==='br')return '<w:r><w:br/></w:r>'
+ if(tag==='img')return drawingXml(node.getAttribute('src'),node.getAttribute('width')||node.naturalWidth,node.getAttribute('height')||node.naturalHeight)
  if(tag==='table')return ''
  let result=''
  const next=parseStyle(node,style)
@@ -194,14 +216,20 @@ function documentXml(paper){
  body+='<w:sectPr><w:pgSz w:w="'+pg.w+'" w:h="'+pg.h+'"'+(landscape?' w:orient="landscape"':'')+'/>'+
    '<w:pgMar w:top="'+mar+'" w:right="'+mar+'" w:bottom="'+mar+'" w:left="'+mar+'"/></w:sectPr>'
  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
-  '<w:document xmlns:w="'+W+'"><w:body>'+body+'</w:body></w:document>'
+  '<w:document xmlns:w="'+W+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'+
+  ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"'+
+  ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'+
+  ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>'+body+'</w:body></w:document>'
 }
 export async function exportNewDocx(paper){
+ imageContext=[]
  const zip=new JSZip()
  zip.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?>'+
  '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
  '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
  '<Default Extension="xml" ContentType="application/xml"/>'+
+ '<Default Extension="png" ContentType="image/png"/>'+
+ '<Default Extension="jpg" ContentType="image/jpeg"/>'+
  '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
  '</Types>')
  zip.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8"?>'+
@@ -209,6 +237,19 @@ export async function exportNewDocx(paper){
  '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
  '</Relationships>')
  zip.file('word/document.xml',documentXml(paper))
+ if(imageContext.length){
+  const relations=['<?xml version="1.0" encoding="UTF-8"?>',
+   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">']
+  for(const img of imageContext){
+   const encoded=img.src.split(',')[1]
+   const decoded=atob(encoded)
+   const bytes=Uint8Array.from(decoded,c=>c.charCodeAt(0))
+   zip.file('word/media/'+img.filename,bytes)
+   relations.push('<Relationship Id="'+img.relationship+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/'+img.filename+'"/>')
+  }
+  relations.push('</Relationships>')
+  zip.file('word/_rels/document.xml.rels',relations.join(''))
+ }
  return new Blob([await zip.generateAsync({type:'uint8array',compression:'DEFLATE'})],
   {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})
 }
