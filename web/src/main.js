@@ -4,6 +4,7 @@ import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
 import {captureBusinessReport,isReportFillRequest,proposeBusinessReport,reportMissingFields} from './business-report.js'
+import {captureLabeledForm,proposeLabeledForm,formRemaining} from './form-autofill.js'
 import {readReportProfile,saveReportProfile,reportToday,proposeReportDefaults,missingReportProfileFields} from './report-profile.js'
 import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
@@ -221,19 +222,21 @@ $('aiForm').onsubmit=async e=>{
   // The dedicated six-field report engine is preserved; other forms use
   // semantic cell coordinates and a combined user-approved preview.
   const crossTableRequest=/모든\s*표|표\s*전체|문서\s*전체|전체\s*빈칸|모든\s*빈칸|양식\s*전체/.test(prompt) && paper.querySelectorAll('table').length>1
-  const report=!crossTableRequest&&isReportFillRequest(prompt)?captureBusinessReport(paper):null
+  const labeledForm=captureLabeledForm(paper)
+  const genericFormMode=Boolean(labeledForm?.recognized && isSemanticFillIntent(prompt))
+  const report=!genericFormMode&&!crossTableRequest&&isReportFillRequest(prompt)?captureBusinessReport(paper):null
   const reportMode=Boolean(report?.recognized)
-  const semanticMode=!reportMode&&isSemanticFillIntent(prompt)
-  const tableIntent=reportMode||semanticMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
+  const semanticMode=!reportMode&&!genericFormMode&&isSemanticFillIntent(prompt)
+  const tableIntent=genericFormMode||reportMode||semanticMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
   refreshDocumentMap()
-  const snapshot=reportMode?report:(semanticMode?semanticSnapshot(paper,{prompt,maxTargets:96}):(tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null))
+  const snapshot=genericFormMode?labeledForm:(reportMode?report:(semanticMode?semanticSnapshot(paper,{prompt,maxTargets:96}):(tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null)))
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
   const today=reportToday()
   const identity=user()
-  const reportProfile=reportMode?readReportProfile(identity):null
-  const directEdits=requestedTableFill?(reportMode?proposeReportDefaults(snapshot,prompt,{today,profile:reportProfile}):inferTableValues(snapshot,prompt,{today})):[]
+  const reportProfile=(reportMode||genericFormMode)?readReportProfile(identity):null
+  const directEdits=requestedTableFill?(genericFormMode?proposeLabeledForm(snapshot,prompt,{today,profile:reportProfile}):(reportMode?proposeReportDefaults(snapshot,prompt,{today,profile:reportProfile}):inferTableValues(snapshot,prompt,{today}))):[]
   const directFieldCount=directEdits.length
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
@@ -248,6 +251,50 @@ $('aiForm').onsubmit=async e=>{
       $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
       addMessage('assistant',pendingTableEdits.length+'개 표 셀을 지정 좌표로 확인했습니다. 미리보기를 확인하고 적용하세요.')
       $('aiPreview').hidden=false
+      return
+    }
+    if(genericFormMode&&requestedTableFill){
+      const chunks=splitSemanticBatches(snapshot.targets,20)
+      const generated=[]
+      const errors=[]
+      for(let index=0;index<chunks.length;index++){
+        $('aiStatus').textContent='양식 항목 작성 '+(index+1)+'/'+chunks.length
+        try{
+          const response=await fetch('/api/ai',{method:'POST',
+            headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
+            body:JSON.stringify({
+              model:selectedModel,mode:'labeled',prompt,selectedText,
+              documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
+            })})
+          const data=await response.json()
+          if(!response.ok)throw new Error(data.error||'AI 요청 실패')
+          if(Array.isArray(data.fields)){
+            const byKey=new Map(chunks[index].map(t=>[t.fieldKey,t]))
+            for(const proposed of data.fields){
+              const target=byKey.get(proposed?.fieldKey)
+              if(target&&typeof proposed.value==='string'&&proposed.value.trim())
+                generated.push({cellId:target.cellId,value:proposed.value.slice(0,1000)})
+            }
+          }
+        }catch(error){errors.push('묶음 '+(index+1)+': '+error.message)}
+      }
+      const directIds=new Set(directEdits.map(e=>e.cellId))
+      pendingTableEdits=validateTableEdits(snapshot,[...directEdits,...generated.filter(e=>!directIds.has(e.cellId))])
+      pendingProposal=''
+      const missing=formRemaining(snapshot,pendingTableEdits)
+      const addresses=new Map(snapshot.targets.map(t=>[t.cellId,t.address]))
+      $('aiPreviewText').textContent=
+        (pendingTableEdits.map(e=>e.label+' ['+(addresses.get(e.cellId)||e.cellId)+']\n  → '+e.value).join('\n\n')
+        ||'확인된 입력값이 없습니다.')+
+        (missing.length?'\n\n추가 확인 필요 ('+missing.length+'개): '+missing.join(' · '):'')+
+        (errors.length?'\n\nAI 요청 오류: '+errors.join(' / '):'')
+      $('aiApply').textContent='양식 '+pendingTableEdits.length+'개 셀 일괄 적용'
+      $('aiApply').disabled=pendingTableEdits.length===0
+      $('aiPreview').hidden=false
+      addMessage('assistant','양식 '+snapshot.targets.length+'개 빈칸을 인식하고 '+pendingTableEdits.length+
+        '개 입력안을 준비했어. 기존 값과 표 구조는 유지하며 승인 시 한 번에 적용해.'+
+        (missing.length?' 입력 보류: '+missing.join(' · '):''))
       return
     }
     if(semanticMode&&requestedTableFill){
