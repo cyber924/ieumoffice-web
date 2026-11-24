@@ -1,7 +1,7 @@
 // MiloSoft ribbon editor for new DOCX documents and safe read/modify mode on imported files.
 const ribbon = {
   '파일': [
-    ['새 문서','newDocument'],['파일 열기','openFile'],['내 문서','myDocuments'],['DOCX / HWPX 저장','saveFile'],['클라우드 저장','cloudSave'],['인쇄','printDoc'],['양식 선택','templates']
+    ['새 문서','newDocument'],['파일 열기','openFile'],['내 문서','myDocuments'],['DOCX / HWPX 저장','saveFile'],['클라우드 저장','cloudSave'],['다른 이름으로 저장','cloudSaveAs'],['인쇄','printDoc'],['양식 선택','templates']
   ],
   '편집': [
     ['실행 취소','undo'],['다시 실행','redo'],['모두 선택','selectAll'],['찾기·바꾸기','find'],['복사','copy'],['붙여넣기','paste']
@@ -168,7 +168,7 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
       button.type='button';button.textContent=label
       button.dataset.action=id
       button.title=label
-      if(id==='saveFile'||id==='cloudSave')button.classList.add('ribbon-accent')
+      if(id==='saveFile'||id==='cloudSave'||id==='cloudSaveAs')button.classList.add('ribbon-accent')
       button.addEventListener('mousedown',()=>{if(within())selectionRange=getSelection().getRangeAt(0).cloneRange()})
       button.onclick=()=>run(id)
       tools.append(button)
@@ -177,7 +177,7 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
   }
   function run(id){
     if(noImported(id))return
-    if(['newDocument','fileInput','myDocuments','saveFile','cloudSave','printDoc','templates','undo','redo','bold','italic','underline','alignLeft','alignCenter','insertTable','addRow','addColumn','mergeCells'].includes(id)){
+    if(['newDocument','fileInput','myDocuments','saveFile','cloudSave','cloudSaveAs','printDoc','templates','undo','redo','bold','italic','underline','alignLeft','alignCenter','insertTable','addRow','addColumn','mergeCells'].includes(id)){
       click(id==='openFile'?'fileInput':id);return
     }
     switch(id){

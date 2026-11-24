@@ -35,3 +35,8 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 .ai-quick-actions button{padding:9px 6px;background:#f8faff;border-color:#e5ebf5;font-size:11px;text-align:center}
 .ai-quick-actions button:hover{background:#eaf0ff;border-color:#cddafd}
 @media(max-width:680px){.ai-quick-actions{display:none}}
+
+.cloud-save-options{display:flex;flex-direction:column;gap:9px;margin:12px 0 18px}
+.cloud-save-options label{font-size:12px;display:flex;gap:9px;align-items:center;color:#42516a}
+.cloud-save-options input{accent-color:#365cf1}
+#saveDialogMessage{min-height:15px;color:#75839a}

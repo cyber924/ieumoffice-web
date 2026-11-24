@@ -1,4 +1,5 @@
 import './styles.css'
+import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits} from './table-ai.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
@@ -107,7 +108,12 @@ function download(blob,name){
   a.href=url;a.download=name;document.body.append(a);a.click();a.remove()
   setTimeout(()=>URL.revokeObjectURL(url),1500)
 }
-async function blobForSave(){return state?savePackage(state,paper):createDocx(paper)}
+async function blobForSave(){
+  const blob=state?await savePackage(state,paper):await exportNewDocx(paper)
+  // Reject a DOCX before any download/upload if native table elements are missing.
+  if(!state || state.type==='docx')await validateDocxTables(blob,paper)
+  return blob
+}
 $('saveFile').onclick=async()=>{
   const b=$('saveFile');b.disabled=true;setStatus('문서 파일 생성 중…')
   try{
@@ -267,33 +273,67 @@ $('aiSettings').onclick=async()=>{
     }catch(e){$('settingsStatus').textContent=e.message}
   }
 };
-async function saveCurrentCloud() {
+
+function openCloudSaveDialog(asNew=false){
+  if(!isCloudReady())return toast('Firebase 연결을 확인해 주세요.')
+  if(!user())return loginDialog()
+  const currentName=fileName()
+  openModal('<h2>클라우드 문서 저장</h2><p>사용할 문서 제목을 입력하세요. DOCX/HWPX는 Storage에, 본문·표 데이터는 Firestore에 저장합니다.</p><label for="cloudDocumentName">문서 제목</label><input id="cloudDocumentName" class="field" maxlength="100" autocomplete="off"><div class="cloud-save-options"><label><input type="radio" name="saveMode" value="update"> 현재 문서 저장 (새 버전)</label><label><input type="radio" name="saveMode" value="new"> 다른 이름으로 새 문서 저장</label></div><p id="saveDialogMessage" role="status"></p><button type="button" class="primary" id="confirmCloudSave">저장하기</button>')
+  const title=$('cloudDocumentName')
+  title.value=currentName
+  const options=Array.from(document.querySelectorAll('input[name="saveMode"]'))
+  if(!cloudId){
+    options.find(el=>el.value==='update').disabled=true
+    options.find(el=>el.value==='new').checked=true
+  }else options.find(el=>el.value===(asNew?'new':'update')).checked=true
+  $('confirmCloudSave').onclick=async()=>{
+    const nextTitle=title.value.trim()
+    if(!nextTitle)return $('saveDialogMessage').textContent='문서 제목을 입력해 주세요.'
+    if(nextTitle.length>100)return $('saveDialogMessage').textContent='문서 제목을 100자 이하로 입력해 주세요.'
+    const mode=options.find(el=>el.checked)?.value||'new'
+    await saveCurrentCloud({asNew:mode==='new',title:nextTitle})
+  }
+  title.focus();title.select()
+}
+async function saveCurrentCloud({asNew=false,title=null}={}) {
   if(!isCloudReady())return toast('Firebase 설정을 확인해 주세요.')
   if(!user())return loginDialog()
   if(cloudSaveRunning)return
+  const actualTitle=(title||fileName()).trim()
+  if(!actualTitle)return toast('문서 제목을 입력해 주세요.')
   cloudSaveRunning=true
   const button=$('cloudSave')
   button.disabled=true
-  const beforeRevision=cloudId
+  const previousId=cloudId
+  const oldTitle=$('filename').value
+  const message=$('saveDialogMessage')
+  if(message)message.textContent='문서와 표 데이터를 저장하고 있습니다…'
   try{
-    setStatus('파일과 검색 데이터 저장 중…')
-    const documentData=extractDocumentData(paper)
+    setStatus('DOCX 표 검증 및 클라우드 파일 저장 중…')
+    const data=extractDocumentData(paper)
     const blob=await blobForSave()
-    const result=await saveCloud(safeFilename(fileName(),state?.type||'docx'),blob,state?.type||'docx',cloudId,documentData)
+    const ext=state?.type||'docx'
+    // New title -> new document ID; previous version stays intact.
+    const result=await saveCloud(safeFilename(actualTitle,ext),blob,ext,asNew?null:cloudId,data)
     cloudId=result.id
+    $('filename').value=actualTitle
     dirty=false
-    setStatus('Storage + Firestore 저장 완료 · 버전 '+result.revisionNumber)
-    toast('문서·표 데이터 및 파일 버전 저장 완료')
+    setStatus('Storage + Firestore 저장 완료 · '+actualTitle+' · 버전 '+result.revisionNumber)
+    if($('modal').open)$('modal').close()
+    toast('"'+actualTitle+'" 저장 완료 (버전 '+result.revisionNumber+')')
   }catch(err){
-    cloudId=beforeRevision
-    setStatus('클라우드 저장 실패 · 문서는 편집기에 유지됨')
+    cloudId=previousId
+    $('filename').value=oldTitle
+    setStatus('클라우드 저장 실패 · 기존 문서 유지됨')
+    if(message)message.textContent='저장 실패: '+err.message
     toast('저장되지 않았습니다: '+err.message)
   }finally{
     cloudSaveRunning=false
     button.disabled=false
   }
 }
-$('cloudSave').onclick=saveCurrentCloud
+$('cloudSave').onclick=()=>openCloudSaveDialog(false)
+if($('cloudSaveAs'))$('cloudSaveAs').onclick=()=>openCloudSaveDialog(true)
 
 function dateText(value){
   if(!value)return '날짜 미상'
