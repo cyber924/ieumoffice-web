@@ -262,7 +262,10 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
    status.textContent='기업마당에서 공고 수집 중…'
    try{const auth=await getToken();if(!auth)throw Error('로그인이 필요합니다.');const r=await fetch('/api/notice-refresh',{method:'POST',headers:{Authorization:'Bearer '+auth}});const data=await parseJSON(r);if(!r.ok)throw Error(data.message||'공고 조회 실패')
     await load();status.textContent='신규 '+data.added+'건 · 변경 '+data.updated+'건 · 기존 '+data.existing+'건 · '+new Date(data.collectedAt).toLocaleString('ko-KR')
-   }catch(e){status.textContent='수집 실패: '+e.message+' · 기존 공고를 유지합니다.'}
+   }catch(e){
+    if(!notices.length){try{const r=await fetch('/api/bizinfo');const data=await parseJSON(r);if(r.ok){notices=data.items||[];redraw()}}catch{}}
+    status.textContent='DB 수집·저장 실패: '+e.message+' · 기존 또는 저장되지 않은 공고를 표시합니다.'
+   }
   }
   filter.onchange=redraw;search.oninput=redraw
   host.append(withLabel('지원 분야',filter),search,button('새로고침',refresh),status,list,link)
