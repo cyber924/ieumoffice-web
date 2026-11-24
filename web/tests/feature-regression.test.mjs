@@ -48,3 +48,58 @@ test('DOCX includes native DrawingML PNG and table content',async()=>{
  assert.ok(zip.file('word/_rels/document.xml.rels'))
  assert.equal((await validateDocxTables(blob,paper)).tables,1)
 })
+
+test('HWPX regression: exact five-table layout pattern and 31-column schedule',async()=>{
+ const paper=setup()
+ const zip=new JSZip()
+ const HP='http://www.hancom.co.kr/hwpml/2011/paragraph'
+ const HS='http://www.hancom.co.kr/hwpml/2011/section'
+ const cell=(column,row,colSpan=1,rowSpan=1,label='')=>'<hp:tc><hp:subList><hp:p><hp:run><hp:t>'+label+'</hp:t></hp:run></hp:p></hp:subList><hp:cellAddr colAddr="'+column+'" rowAddr="'+row+'"/><hp:cellSpan colSpan="'+colSpan+'" rowSpan="'+rowSpan+'"/><hp:cellSz width="'+(colSpan*650)+'" height="1984"/></hp:tc>'
+ const table=(id,columns,rowSpecs)=>{
+  const rows=rowSpecs.map((cells,r)=>'<hp:tr>'+cells.map(x=>cell(x[0],r,x[1]||1,x[2]||1,x[3]||'')).join('')+'</hp:tr>').join('')
+  return '<hp:p><hp:run><hp:tbl id="'+id+'" colCnt="'+columns+'" rowCnt="'+rowSpecs.length+'"><hp:sz width="48000"/>'+rows+'</hp:tbl></hp:run></hp:p>'
+ }
+ const first=[
+  [[0,1,4,'과제목표'],[1,2,1,'정량목표'],[3,1,1,'비고']],
+  [[1,1,1,''],[2,1,1,''],[3,1,1,'']],
+  [[1,1,1,''],[2,1,1,''],[3,1,1,'']],
+  [[1,1,1,''],[2,1,1,''],[3,1,1,'']]
+ ]
+ const goals=[
+  [[0,2,1,'구분'],[2,1,1,'세부내용'],[3,1,1,'목표'],[4,1,1,'증빙']],
+  ...Array.from({length:5},(_,r)=>r===0?
+   [[0,1,3,'필수목표'],[1],[2],[3],[4]]:
+   r===3?[[0,1,2,'자율목표'],[1],[2],[3],[4]]:
+   [[1],[2],[3],[4]])
+ ]
+ const schedule=[
+  [[0,1,2,'구분'],[1,1,2,'추진내용'],[2,28,1,'추진 일정(월)'],[30,1,2,'비고']],
+  Array.from({length:7},(_,i)=>[2+i*4,4,1,String(i+4)]),
+  ...Array.from({length:5},()=>Array.from({length:31},(_,i)=>[i]))
+ ]
+ const revenue=Array.from({length:6},(_,r)=>Array.from({length:4},(_,i)=>[i,1,1,r===0?['구분','수익모델','계획','단가'][i]:'']))
+ const budget=Array.from({length:8},(_,r)=>r===0?
+  [[0,2,1,'구분'],[2,1,1,'사업비'],[3,1,1,'지원금'],[4,1,1,'자체부담금'],[5,1,1,'구성비']]:
+  r===1?[[0,1,5,'직접비'],...Array.from({length:5},(_,i)=>[i+1])]:
+  r<6?Array.from({length:5},(_,i)=>[i+1]):
+  Array.from({length:6},(_,i)=>[i]))
+ const xml='<?xml version="1.0"?><hs:sec xmlns:hs="'+HS+'" xmlns:hp="'+HP+'">'+
+  '<hp:p><hp:run><hp:t>사업계획서</hp:t></hp:run></hp:p>'+
+  table('one',4,first)+table('two',5,goals)+table('three',31,schedule)+
+  table('four',4,revenue)+table('five',6,budget)+'</hs:sec>'
+ zip.file('Contents/section0.xml',xml)
+ const bytes=await zip.generateAsync({type:'uint8array'})
+ const state=await openPackage({name:'test-template.hwpx',arrayBuffer:async()=>bytes.buffer})
+ paper.innerHTML=state.html
+ assert.equal(state.tableStats.tables,5)
+ assert.equal(state.tableStats.maxColumns,31)
+ assert.equal(paper.querySelectorAll('table').length,5)
+ assert.equal(paper.querySelector('table').rows[0].cells[0].rowSpan,4)
+ assert.equal(paper.querySelectorAll('table')[2].querySelectorAll('col').length,31)
+ assert.equal(paper.querySelectorAll('table')[2].rows[0].cells[2].colSpan,28)
+ assert.equal(paper.textContent.match(/사업계획서/g)?.length,1)
+ const blob=await savePackage(state,paper)
+ const saved=await JSZip.loadAsync(await blob.arrayBuffer())
+ const original=await zip.file('Contents/section0.xml').async('string')
+ assert.equal(await saved.file('Contents/section0.xml').async('string'),original)
+})
