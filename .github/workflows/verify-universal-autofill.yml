@@ -1,0 +1,35 @@
+name: Verify universal AI example autofill
+on:
+  push:
+    branches: [feat/universal-sample-autofill]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        working-directory: web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+      - name: Syntax verification
+        working-directory: web
+        run: |
+          node --check src/sample-autofill.js
+          node --check src/main.js
+          node --check src/form-autofill.js
+          node --check api/ai.js
+      - name: Sample, strict mode, formatting and legacy regressions
+        working-directory: web
+        run: node --test tests/universal-autofill.test.mjs tests/unified-form.test.mjs tests/business-report.test.mjs tests/document-map.test.mjs
+      - name: Production build
+        working-directory: web
+        run: npm run build

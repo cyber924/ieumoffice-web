@@ -24,18 +24,28 @@ export function captureLabeledForm(root){
   const found=new Set(),records=[];
   for(const [ri,row] of Array.from(table.rows).entries()){
    const cs=Array.from(row.cells);if(cs.length!==2)continue;
-   const match=identifyFormLabel(read(cs[0]));
-   if(!match||found.has(match.key)||cs[1].querySelector('table,img,svg,input,iframe'))continue;
+   const left=read(cs[0]);
+   const matched=identifyFormLabel(left)
+   // A new template need not have its labels hard-coded in advance.
+   // Only short, distinct, non-empty label cells are treated as form fields.
+   if(!left||left.length>45||cs[1].querySelector('table,img,svg,input,iframe'))continue
+   const key=matched?.key||('custom_'+ti+'_'+ri)
+   if(found.has(key))continue
+   const kind=matched?.kind||
+     (/(?:서명|도장|날인|인감|승인|결재|확인란)/.test(left)?'approval':
+      /(?:전화|연락처|이메일|주소|계좌|사업자번호|주민등록|이름|성명|담당자)/.test(left)?'personal':
+      /(?:금액|수량|단가|비율|실적|비용|예산|매출|정량)/.test(left)?'numeric':
+      /(?:작성일|날짜|일자|기간)/.test(left)?'date':'narrative')
    const hint=cs[1].getAttribute('data-hwp-col');
    const c=hint!==null&&Number.isInteger(+hint)&&+hint>=0?+hint:Math.max(1,cs[0].colSpan||1);
-   records.push({fieldKey:match.key,kind:match.kind,
+   records.push({fieldKey:key,kind,
     cellId:'t'+ti+'r'+ri+'c'+c,table:ti+1,row:ri+1,column:c+1,
     address:'표'+(ti+1)+'!'+String.fromCharCode(65+Math.min(c,25))+(ri+1),
     label:read(cs[0]),rowLabel:read(cs[0]),columnHeader:'내용',
     tableTitle:'입력 양식',current:read(cs[1]).slice(0,1000),editable:true,el:cs[1]});
-   found.add(match.key);
+   found.add(key);
   }
-  if(records.length>=3)groups.push(records);
+  if(records.length>=3||records.filter(r=>!r.fieldKey.startsWith('custom_')).length>=2)groups.push(records);
  }
  if(!groups.length)return null;
  const all=groups.flat();
