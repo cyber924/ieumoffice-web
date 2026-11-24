@@ -4,6 +4,7 @@ import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
 import {captureBusinessReport,isReportFillRequest,proposeBusinessReport,reportMissingFields} from './business-report.js'
+import {readReportProfile,saveReportProfile,reportToday,proposeReportDefaults,missingReportProfileFields} from './report-profile.js'
 import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
@@ -229,8 +230,10 @@ $('aiForm').onsubmit=async e=>{
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
-  const today=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'long',day:'numeric'}).format(new Date())
-  const directEdits=requestedTableFill?(reportMode?proposeBusinessReport(snapshot,prompt,{today}):inferTableValues(snapshot,prompt,{today})):[]
+  const today=reportToday()
+  const identity=user()
+  const reportProfile=reportMode?readReportProfile(identity):null
+  const directEdits=requestedTableFill?(reportMode?proposeReportDefaults(snapshot,prompt,{today,profile:reportProfile}):inferTableValues(snapshot,prompt,{today})):[]
   const directFieldCount=directEdits.length
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
@@ -301,6 +304,8 @@ $('aiForm').onsubmit=async e=>{
       const byKey=new Map(snapshot.targets.map(t=>[t.fieldKey,t]))
       const modelProposals=Array.isArray(data.fields)?data.fields:[]
       for(const proposal of modelProposals){
+        // Identifying fields can only come from the user's request or verified profile.
+        if(!['work','progress','plan'].includes(proposal?.fieldKey))continue
         const target=byKey.get(proposal?.fieldKey)
         if(!target||typeof proposal.value!=='string'||!proposal.value.trim())continue
         rawEdits.push({cellId:target.cellId,value:proposal.value.slice(0,1000)})
@@ -322,7 +327,8 @@ $('aiForm').onsubmit=async e=>{
       $('aiApply').textContent=reportMode?'업무보고서 '+pendingTableEdits.length+'개 항목 일괄 적용':'표 '+pendingTableEdits.length+'개 셀에 적용'
       if(reportMode && pendingTableEdits.length<snapshot.targets.length){
         const missing=reportMissingFields(snapshot,pendingTableEdits)
-        $('aiPreviewText').textContent+='\n\n입력 보류 ('+missing.length+'개): '+missing.join(' · ')
+        $('aiPreviewText').textContent+='\n\n입력 보류 ('+missing.length+'개): '+missing.join(' · ')+
+          (missingReportProfileFields(snapshot,pendingTableEdits).length?'\n부서·담당자 정보는 우측 상단 업무보고 기본정보 메뉴에서 설정할 수 있어요.':'')
       }
     }else{
       addMessage('assistant',pendingProposal||(requestedTableFill?'표의 빈칸 '+snapshot.targets.length+'개를 인식했지만 적용할 AI 제안이 없습니다. 사업명·작성 목적 등을 구체적으로 입력해 주세요.':'적용할 제안이 없습니다.'))
@@ -374,6 +380,37 @@ async function loginDialog(){
   }
 }
 $('authButton').onclick=loginDialog
+function reportProfileDialog(){
+  if(!user())return loginDialog()
+  const account=user()
+  const profile=readReportProfile(account)
+  openModal('<h2>업무보고 기본정보</h2><p>이 브라우저에서 로그인한 계정에만 적용됩니다. 부서와 담당자를 등록하면 업무보고서의 빈칸에 자동 제안합니다. 입력하지 않은 항목은 임의로 만들지 않습니다.</p>'+
+    '<label>부서<input class="field" id="reportDepartment" maxlength="70" autocomplete="organization"></label>'+
+    '<label>담당자<input class="field" id="reportAssignee" maxlength="70" autocomplete="name"></label>'+
+    '<p id="reportProfileStatus" role="status"></p><div class="flex-buttons"><button type="button" id="saveReportProfile" class="primary">저장</button><button type="button" id="clearReportProfile">기본정보 비우기</button></div>')
+  $('reportDepartment').value=profile.department
+  $('reportAssignee').value=profile.assignee
+  $('saveReportProfile').onclick=()=>{
+    try{
+      saveReportProfile(account,{department:$('reportDepartment').value,assignee:$('reportAssignee').value})
+      $('modal').close()
+      toast('업무보고 기본정보가 이 브라우저에 저장됐습니다.')
+    }catch(err){$('reportProfileStatus').textContent=err.message}
+  }
+  $('clearReportProfile').onclick=()=>{
+    $('reportDepartment').value=''
+    $('reportAssignee').value=''
+    $('reportProfileStatus').textContent='값을 지웠습니다. 저장을 누르면 반영됩니다.'
+  }
+}
+const reportProfileButton=document.createElement('button')
+reportProfileButton.type='button'
+reportProfileButton.id='reportProfileOpen'
+reportProfileButton.textContent='업무보고 기본정보'
+reportProfileButton.title='업무보고서 부서·담당자 기본값'
+reportProfileButton.onclick=reportProfileDialog
+$('aiSettings').insertAdjacentElement('afterend',reportProfileButton)
+
 // BYOK: never write provider keys to localStorage, Firestore, GitHub, or logs.
 $('aiSettings').onclick=async()=>{
   openModal('<h2>AI 모델·API 키 설정</h2><p>API 키는 이 브라우저 탭의 메모리에만 보관됩니다. 새로고침하면 지워지며, AI 요청할 때만 암호화된 HTTPS 연결로 서버에 전달됩니다. 운영자 공용 키는 Vercel Secrets에 등록할 수 있습니다.</p><div id="keyFields"></div><div class="flex-buttons"><button type="button" id="saveKeys" class="primary">이 탭에 적용</button><button type="button" id="clearKeys">키 초기화</button><button type="button" id="checkServer">서버 연결 확인</button></div><p id="settingsStatus" role="status"></p>');
