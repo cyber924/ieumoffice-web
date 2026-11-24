@@ -84,5 +84,30 @@ service cloud.firestore {
         }
       }
     }
+    // Owner-only template fingerprints: geometry and field labels, no document bodies.
+    match /users/{userId}/templateMemory/{templateId} {
+      allow read: if owner(userId);
+      allow create, update: if owner(userId)
+        && templateId.matches('^tm_[0-9a-f]{8}_[0-9]{1,6}$')
+        && request.resource.data.keys().hasOnly([
+          'title','canonical','tableCount','fieldCount','version','updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'title','canonical','tableCount','fieldCount','version','updatedAt'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.canonical is string
+        && request.resource.data.canonical.size() <= 12000
+        && request.resource.data.tableCount is int
+        && request.resource.data.tableCount >= 1
+        && request.resource.data.tableCount <= 30
+        && request.resource.data.fieldCount is int
+        && request.resource.data.fieldCount >= 0
+        && request.resource.data.fieldCount <= 3000
+        && request.resource.data.version == 1
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if owner(userId);
+    }
   }
 }

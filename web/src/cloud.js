@@ -136,3 +136,33 @@ export async function readCloudIndexed(doc){
   if(!doc.revisionId)return doc.textPreview||''
   return loadRevisionText(doc.id,doc.revisionId,{maxChars:18000})
 }
+
+
+// Template memory records only field labels and table geometry.
+// This collection needs the accompanying owner-only Firestore rule to be published.
+const templateRef=(uid,id)=>modules.fs.doc(db,'users',uid,'templateMemory',id)
+export async function saveTemplateMemory(record){
+ const uid=requireUser()
+ if(!/^tm_[0-9a-f]{8}_[0-9]{1,6}$/.test(record?.id||''))throw new Error('양식 식별자가 올바르지 않습니다.')
+ if(typeof record.canonical!=='string'||record.canonical.length>12000)throw new Error('양식 구조가 너무 큽니다.')
+ const data={title:String(record.title||'양식').slice(0,80),
+   canonical:record.canonical,tableCount:record.tableCount,
+   fieldCount:record.fieldCount,version:1,updatedAt:modules.fs.serverTimestamp()}
+ await modules.fs.setDoc(templateRef(uid,record.id),data)
+ checkUser(uid)
+ return {id:record.id,synced:true}
+}
+export async function readTemplateMemory(id){
+ const uid=requireUser()
+ if(!/^tm_[0-9a-f]{8}_[0-9]{1,6}$/.test(id||''))return null
+ const snapshot=await modules.fs.getDoc(templateRef(uid,id))
+ checkUser(uid)
+ return snapshot.exists()?{id:snapshot.id,...snapshot.data()}:null
+}
+export async function listTemplateMemories(){
+ const uid=requireUser()
+ const col=modules.fs.collection(db,'users',uid,'templateMemory')
+ const snapshots=await modules.fs.getDocs(modules.fs.query(col,modules.fs.limit(80)))
+ checkUser(uid)
+ return snapshots.docs.map(d=>({id:d.id,...d.data()}))
+}
