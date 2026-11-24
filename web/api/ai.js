@@ -87,6 +87,8 @@ export default async function handler(req,res){
       const key=String(entry?.fieldKey||'')
       const value=typeof entry?.value==='string'?entry.value.trim():''
       if(!allowed.has(key)||seen.has(key)||!value||value.length>1000)continue
+      // AI may draft prose but cannot invent identity or dates.
+      if(!['work','progress','plan'].includes(key))continue
       if(/^(?:없음|알 수 없음|미정|미상|정보 없음|확인 필요)$/i.test(value))continue
       fields.push({fieldKey:key,value});seen.add(key)
     }
