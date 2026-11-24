@@ -24,7 +24,7 @@ jobs:
           git fetch --no-tags --depth=1 upstream refs/tags/v0.13.2
           mkdir -p "$RUNNER_TEMP/ieumoffice-upstream"
           git archive FETCH_HEAD | tar -x -C "$RUNNER_TEMP/ieumoffice-upstream"
-          rsync -a --exclude '/web/' --exclude '/.github/workflows/import-upstream.yml' "$RUNNER_TEMP/ieumoffice-upstream/" ./
+          rsync -a --exclude '/web/' --exclude '/.github/workflows/' "$RUNNER_TEMP/ieumoffice-upstream/" ./
           git add -A
           if git diff --cached --quiet; then echo "Source already synchronized"; exit 0; fi
           git commit -m "vendor: import IeumOffice v0.13.2 source snapshot"
