@@ -71,7 +71,7 @@ function segmentAfter(prompt,regex){
  value=value.split(/\s+(?=(?:현재\s|앞으로\s|향후\s*계획|진행\s*현황|업무\s*내용))/)[0]
  return sentence(value)
 }
-const bad=/^(?:없음|모름|미정|빈칸|미입력|자동|작성|채워|넣어|알아서|입력해)/i
+const bad=/^(?:없음|모름|미정|빈칸|미입력|알아서|입력해(?:줘)?)(?:$|[\\s,.，。])/i
 function nameOf(prompt,kind){
  const regex=kind==='department'
   ? /(?:부서(?:명)?|소속)(?:은|는|:|：|=)?\s*([가-힣A-Za-z0-9_-]{2,24})/
