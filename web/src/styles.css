@@ -84,3 +84,22 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 .paper img[data-milo-media]{cursor:pointer;border-radius:2px}
 .paper img[data-milo-media]:hover{outline:2px solid #81a0fa;outline-offset:3px}
 @media(max-width:720px){.media-dialog .symbol-grid{grid-template-columns:repeat(7,minmax(0,1fr))}.media-dialog .media-grid{grid-template-columns:1fr 1fr}}
+
+/* Visual-only table coordinate guides, not included in HWPX/DOCX text. */
+.coordinate-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 0 0;border-top:1px solid #e9eef7}
+.coordinate-toolbar button{font-size:11px;padding:6px 10px;border:1px solid #dce5f3;background:#fff;color:#546783;border-radius:6px}
+.coordinate-toolbar button.selected{background:#eaf0ff;color:#305ce6;border-color:#a9bbf3}
+.coordinate-toolbar #coordinateInfo{font-size:10px;color:#8190a7;margin-left:5px}
+.paper.show-cell-addresses td,.paper.show-cell-addresses th{position:relative}
+.paper.show-cell-addresses td[data-cell-address]::before,
+.paper.show-cell-addresses th[data-cell-address]::before{
+ content:attr(data-cell-address);position:absolute;right:3px;top:1px;
+ padding:1px 4px;font-size:8px;line-height:12px;background:#2c4a8e;color:#fff;
+ border-radius:4px;pointer-events:none;z-index:1;white-space:nowrap;
+}
+.paper.show-ai-blanks [data-ai-blank="true"]{outline:2px solid #65a58c;outline-offset:-3px;background:#effaf5}
+@media print{
+ .paper.show-cell-addresses [data-cell-address]::before{content:none!important;display:none!important}
+ .paper.show-ai-blanks [data-ai-blank="true"]{outline:0!important;background:transparent!important}
+ .coordinate-toolbar{display:none!important}
+}

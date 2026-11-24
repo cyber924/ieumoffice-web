@@ -1,0 +1,35 @@
+name: Verify MiloSoft document coordinate and semantic autofill
+on:
+  push:
+    branches: [feat/document-coordinates-semantic-fill]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+      - name: Source syntax
+        working-directory: web
+        run: |
+          node --check src/main.js
+          node --check src/document-map.js
+          node --check api/ai.js
+          node --check src/table-ai.js
+      - name: Coordinate merged cells, tables, DOCX and legacy report tests
+        working-directory: web
+        run: node --test tests/document-map.test.mjs tests/business-report.test.mjs tests/hwpx-ai-fill.test.mjs
+      - name: Production build
+        working-directory: web
+        run: npm run build
