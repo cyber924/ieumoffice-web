@@ -1,0 +1,31 @@
+name: Verify AI table suggestions
+on:
+  push:
+    branches: [fix/ai-table-natural-fill]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: web
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify syntax
+        working-directory: web
+        run: |
+          node --check api/ai.js
+          node --check api/table-output.js
+          node --check src/main.js
+          node --check src/table-ai.js
+      - name: Test parsing and allowed cell bindings
+        working-directory: web
+        run: node --test tests/ai-response.test.mjs
+      - name: Production build
+        working-directory: web
+        run: npm run build
