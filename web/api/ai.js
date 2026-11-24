@@ -16,8 +16,15 @@ async function providerRequest(body,key){
  if(body.model==='gemini'){
   const k=key||process.env.GEMINI_API_KEY
   if(!k)throw new Error('Gemini API 키가 설정되지 않았습니다.')
-  res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(process.env.GEMINI_MODEL||'gemini-2.5-flash')+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({systemInstruction:{parts:[{text:guide}]},contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1600}})})
-  data=await res.json();if(!res.ok)throw new Error('Gemini API 오류 ('+res.status+')')
+  const geminiModel=process.env.GEMINI_MODEL||'gemini-3.5-flash'
+  res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(geminiModel)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({systemInstruction:{parts:[{text:guide}]},contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1600}})})
+  data=await res.json()
+  if(!res.ok){
+   if(res.status===404)throw new Error('Gemini 모델을 사용할 수 없습니다 ('+geminiModel+', 404). AI Studio에서 현재 키의 모델 접근 권한을 확인해 주세요.')
+   if(res.status===429)throw new Error('Gemini 요청 한도 초과 (429). 잠시 후 다시 이용해 주세요.')
+   if(res.status===403)throw new Error('Gemini API 접근 거부 (403). API 키와 프로젝트 설정을 확인해 주세요.')
+   throw new Error('Gemini API 오류 ('+res.status+')')
+  }
   return data.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||''
  }
  if(body.model==='claude'){
@@ -51,6 +58,7 @@ export default async function handler(req,res){
   return res.status(200).json({suggestion:response})
  }catch(err){
   const message=String(err?.message||'')
-  return res.status(502).json({error:/API 키가 설정되지 않았습니다/.test(message)?message:'AI 호출 실패: '+(/API 오류/.test(message)?message:'서버 연결을 점검해 주세요.')})
+  const safe=/API 키가 설정되지 않았습니다|Gemini 모델을 사용할 수 없습니다|Gemini 요청 한도 초과|Gemini API 접근 거부|Gemini API 오류/.test(message)
+  return res.status(502).json({error:safe?message:'AI 호출 실패: 서버 연결을 점검해 주세요.'})
  }
 }
