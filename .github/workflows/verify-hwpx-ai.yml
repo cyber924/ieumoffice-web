@@ -1,0 +1,33 @@
+name: MiloSoft HWPX cell input verification
+on:
+  push:
+    branches:
+      - fix/hwpx-ai-table-fill
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+      - name: Verify source syntax
+        working-directory: web
+        run: |
+          node --check src/table-ai.js
+          node --check src/formats.js
+          node --check src/main.js
+      - name: Test HWPX table cell edits and saved file
+        working-directory: web
+        run: node --test tests/hwpx-ai-fill.test.mjs
+      - name: Build
+        working-directory: web
+        run: npm run build
