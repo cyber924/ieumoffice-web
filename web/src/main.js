@@ -1,4 +1,5 @@
 import './styles.css'
+import {captureTableTargets,validateTableEdits,applyTableEdits} from './table-ai.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud} from './cloud.js'
 
@@ -12,6 +13,8 @@ const sessionKeys={gpt:'',gemini:'',claude:''}
 let cloudId=null
 let recentSelection=''
 let pendingProposal=''
+let pendingTableEdits=[]
+let pendingTableSnapshot=null
 let lastFocusedCell=null
 let dirty=false
 let toastTimer
@@ -175,23 +178,46 @@ $('aiForm').onsubmit=async e=>{
   const authToken=await token()
   if(!authToken)return toast('AI 기능은 Firebase 로그인 및 서버 API 키 설정 후 사용할 수 있습니다.')
   const selectedText=recentSelection||''
+  const tableIntent=/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
+  const snapshot=tableIntent?captureTableTargets(paper,getCell()):null
+  const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
+  pendingTableSnapshot=requestedTableFill?snapshot:null
+  pendingTableEdits=[]
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:paper.innerText.slice(0,24000),providerKey:sessionKeys[selectedModel]||''})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:paper.innerText.slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?'table':'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
+    const rawEdits=Array.isArray(data.edits)?data.edits:[]
+    pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,rawEdits):[]
     pendingProposal=String(data.suggestion||'')
-    addMessage('assistant',pendingProposal)
-    $('aiPreviewText').textContent=pendingProposal
+    if(pendingTableEdits.length){
+      const description=pendingTableEdits.map(e=>e.label+' : '+(e.before||'(빈칸)')+' → '+e.value).join('\n')
+      addMessage('assistant','표 '+pendingTableEdits.length+'개 셀에 입력할 내용을 준비했습니다. 아래 미리보기에서 확인해 주세요.\n'+description)
+      $('aiPreviewText').textContent=description
+      $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
+    }else{
+      addMessage('assistant',pendingProposal||'일치하는 표 입력값을 찾지 못했어요. 수정할 셀을 먼저 선택하거나 내용을 구체적으로 요청해 주세요.')
+      $('aiPreviewText').textContent=pendingProposal||'표 구조를 보호하기 위해 변경하지 않았습니다.'
+      $('aiApply').textContent='문서에 적용'
+    }
     $('aiPreview').hidden=false
   }catch(err){addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)}
   finally{$('aiStatus').textContent='AI 연결';$('aiSend').disabled=false}
 }
-$('aiReject').onclick=()=>{$('aiPreview').hidden=true;pendingProposal=''}
+$('aiReject').onclick=()=>{$('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null}
 $('aiApply').onclick=()=>{
-  if(!pendingProposal)return
-  if(state)return toast('원본 DOCX/HWPX는 현재 AI 제안을 자동 삽입하지 않습니다. 먼저 원하는 위치에 직접 적용해 주세요.')
+  if(pendingTableEdits.length){
+    const applied=applyTableEdits(pendingTableEdits)
+    pendingTableEdits=[];pendingTableSnapshot=null;pendingProposal=''
+    $('aiPreview').hidden=true
+    if(applied){markDirty();toast('표 '+applied+'개 셀에 적용했습니다. 저장하여 확인하세요.')}
+    else toast('표가 수정되어 적용하지 않았습니다. 다시 AI에게 요청하세요.')
+    return
+  }
+  if(!pendingProposal)return toast('적용할 수정안이 없습니다.')
+  if(state)return toast('원본 DOCX/HWPX의 표 외 텍스트 자동 삽입은 제한됩니다.')
   const text=pendingProposal
   paper.focus()
   const selection=window.getSelection()
