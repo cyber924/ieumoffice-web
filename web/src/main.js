@@ -111,6 +111,7 @@ $('newDocument').onclick=()=>{
   if(dirty&&!confirm('새 문서를 만들까요? 저장하지 않은 현재 변경 내용은 사라질 수 있습니다.'))return
   state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[]
   paper.innerHTML=initial;$('filename').value='제목 없는 문서'
+  delete paper.dataset.orientation;delete paper.dataset.margin
   localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();setStatus('새 문서 준비 완료')
 }
 function download(blob,name){
@@ -610,7 +611,20 @@ async function searchReferences(){
  }
 }
 installRibbon({paper,isImported:()=>Boolean(state),markDirty,toast,getCell,inspect:documentInspection,compare:compareHistory,searchAI:searchReferences})
-const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),markDirty,toast})
+const convertToDocxCopy=(kind)=>{
+  if(!state)return true
+  const name=String($('filename').value||'제목 없는 문서')
+  if(!confirm('이 기능은 가져온 HWPX/DOCX의 원본 편집을 지원하지 않습니다. 현재 보이는 내용을 새 DOCX 편집 사본으로 변환할까요? 복잡한 표·누름틀·원본 스타일은 달라질 수 있습니다. 원본 파일은 변경되지 않습니다.'))return false
+  state=null;cloudId=null
+  $('filename').value=name+'-편집사본'
+  // Existing DOM is intentionally retained, but all source bindings become
+  // irrelevant because the new DOCX exporter uses the rendered DOM.
+  paper.removeAttribute('data-imported')
+  updateMode();markDirty()
+  toast('DOCX 편집 사본으로 전환했습니다. 파일을 별도 이름으로 저장해 주세요.')
+  return true
+}
+const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
 window.addEventListener('milosoft:media-action',e=>mediaTools.open(e.detail?.kind))
 
 // Compact AI workspace shortcuts. All generation actions use existing login,
