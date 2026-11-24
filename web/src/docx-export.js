@@ -120,11 +120,16 @@ function cellXml(item,colCount){
  pr+='</w:tcPr>'
  if(!cell)return '<w:tc>'+pr+'<w:p/></w:tc>'
  const blocks=blockChildren(cell)
- return '<w:tc>'+pr+(blocks||paragraph(cell))+'</w:tc>'
+ const center=cell.style?.textAlign==='center'
+ const content=center?'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'+
+  '<w:r><w:t xml:space="preserve">'+xmlEscape(text(cell))+'</w:t></w:r></w:p>':(blocks||paragraph(cell))
+ return '<w:tc>'+pr+content+'</w:tc>'
 }
 function tableXml(table){
  const {rows,cols}=tableLayout(table)
- let xml='<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblBorders>'
+ let xml='<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/>'+
+  (table.dataset?.centerTable==='true'?'<w:jc w:val="center"/>':'')+
+  '<w:tblLayout w:type="fixed"/><w:tblBorders>'
  for(const edge of ['top','left','bottom','right','insideH','insideV'])xml+='<w:'+edge+' w:val="single" w:sz="6" w:color="8B98A9"/>'
  xml+='</w:tblBorders></w:tblPr><w:tblGrid>'
  for(let i=0;i<cols;i++)xml+='<w:gridCol w:w="'+Math.floor(9000/cols)+'"/>'
