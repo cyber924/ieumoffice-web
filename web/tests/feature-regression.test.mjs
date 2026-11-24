@@ -8,6 +8,12 @@ const setup=()=>{
  const dom=new JSDOM('<!doctype html><html lang="ko"><body><article id="paper"></article></body></html>')
  globalThis.DOMParser=dom.window.DOMParser
  globalThis.XMLSerializer=dom.window.XMLSerializer
+ if(!('innerText' in dom.window.HTMLElement.prototype)){
+  Object.defineProperty(dom.window.HTMLElement.prototype,'innerText',{
+   get(){return this.textContent||''},
+   set(v){this.textContent=v}
+  })
+ }
  return dom.window.document.getElementById('paper')
 }
 test('HWPX merged columns and rows preserve table shape',async()=>{
