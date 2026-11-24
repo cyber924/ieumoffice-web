@@ -16,7 +16,7 @@ async function providerRequest(body,key){
  if(body.model==='gemini'){
   const k=key||process.env.GEMINI_API_KEY
   if(!k)throw new Error('Gemini API 키가 설정되지 않았습니다.')
-  const geminiModel=process.env.GEMINI_MODEL||'gemini-3.5-flash'
+  const geminiModel=process.env.GEMINI_MODEL||'gemini-3.8-flash'
   res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(geminiModel)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({systemInstruction:{parts:[{text:guide}]},contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1600}})})
   data=await res.json()
   if(!res.ok){
