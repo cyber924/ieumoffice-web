@@ -5,6 +5,7 @@ import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
 import {captureBusinessReport,isReportFillRequest,proposeBusinessReport,reportMissingFields} from './business-report.js'
 import {captureLabeledForm,proposeLabeledForm,formRemaining} from './form-autofill.js'
+import {AUTOFILL_MODES,completeDraft,isUnverifiedDraft} from './sample-autofill.js'
 import {readReportProfile,saveReportProfile,reportToday,proposeReportDefaults,missingReportProfileFields} from './report-profile.js'
 import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
@@ -25,6 +26,8 @@ let recentSelection=''
 let pendingProposal=''
 let pendingTableEdits=[]
 let pendingTableSnapshot=null
+let fillMode='sample' // default: reviewed examples; strict mode never invents missing fields
+
 let showCoordinates=false
 let showBlankTargets=false
 let mapTimer
@@ -238,6 +241,7 @@ $('aiForm').onsubmit=async e=>{
   const reportProfile=(reportMode||genericFormMode)?readReportProfile(identity):null
   const directEdits=requestedTableFill?(genericFormMode?proposeLabeledForm(snapshot,prompt,{today,profile:reportProfile}):(reportMode?proposeReportDefaults(snapshot,prompt,{today,profile:reportProfile}):inferTableValues(snapshot,prompt,{today}))):[]
   const directFieldCount=directEdits.length
+  const completionOptions={mode:fillMode,today,profile:reportProfile||{},prompt}
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
@@ -280,20 +284,25 @@ $('aiForm').onsubmit=async e=>{
         }catch(error){errors.push('묶음 '+(index+1)+': '+error.message)}
       }
       const directIds=new Set(directEdits.map(e=>e.cellId))
-      pendingTableEdits=validateTableEdits(snapshot,[...directEdits,...generated.filter(e=>!directIds.has(e.cellId))])
+      const completed=completeDraft(snapshot,directEdits,generated.filter(e=>!directIds.has(e.cellId)),completionOptions)
+      pendingTableEdits=validateTableEdits(snapshot,completed.edits)
+      const sourceById=new Map(completed.edits.map(e=>[e.cellId,e.source]))
+      for(const edit of pendingTableEdits)edit.source=sourceById.get(edit.cellId)||edit.source
       pendingProposal=''
       const missing=formRemaining(snapshot,pendingTableEdits)
+      const exampleCount=pendingTableEdits.filter(e=>e.source==='기본 예시값 (확인 후 수정)').length
       const addresses=new Map(snapshot.targets.map(t=>[t.cellId,t.address]))
       $('aiPreviewText').textContent=
-        (pendingTableEdits.map(e=>e.label+' ['+(addresses.get(e.cellId)||e.cellId)+']\n  → '+e.value).join('\n\n')
+        (pendingTableEdits.map(e=>e.label+' ['+(addresses.get(e.cellId)||e.cellId)+']'+(isUnverifiedDraft(e.source)?' [예시·초안 확인]':' [제공 정보]')+'\n  → '+e.value).join('\n\n')
         ||'확인된 입력값이 없습니다.')+
+        (exampleCount?'\n\n예시값 '+exampleCount+'개는 실제 정보를 확인한 후 수정해 주세요.':'')+
         (missing.length?'\n\n추가 확인 필요 ('+missing.length+'개): '+missing.join(' · '):'')+
         (errors.length?'\n\nAI 요청 오류: '+errors.join(' / '):'')
       $('aiApply').textContent='양식 '+pendingTableEdits.length+'개 셀 일괄 적용'
       $('aiApply').disabled=pendingTableEdits.length===0
       $('aiPreview').hidden=false
       addMessage('assistant','양식 '+snapshot.targets.length+'개 빈칸을 인식하고 '+pendingTableEdits.length+
-        '개 입력안을 준비했어. 기존 값과 표 구조는 유지하며 승인 시 한 번에 적용해.'+
+        '개 입력안을 준비했어. 예시값 '+exampleCount+'개는 실제 정보로 검토·수정해 줘. 기존 값과 표 구조는 유지하며 승인 시 한 번에 적용해.'+
         (missing.length?' 입력 보류: '+missing.join(' · '):''))
       return
     }
@@ -322,16 +331,19 @@ $('aiForm').onsubmit=async e=>{
         }
       }
       const protectedIds=new Set(directEdits.map(e=>e.cellId))
-      const proposals=[...directEdits,...suggested.filter(e=>!protectedIds.has(e.cellId))]
-      pendingTableEdits=validateTableEdits(snapshot,proposals)
+      const completed=completeDraft(snapshot,directEdits,suggested.filter(e=>!protectedIds.has(e.cellId)),completionOptions)
+      pendingTableEdits=validateTableEdits(snapshot,completed.edits)
+      const sourceById=new Map(completed.edits.map(e=>[e.cellId,e.source]))
+      for(const edit of pendingTableEdits)edit.source=sourceById.get(edit.cellId)||edit.source
       pendingProposal=''
       const remaining=Math.max(0,snapshot.totalAvailable-pendingTableEdits.length)
       const warnings=[
+        completed.examples?'기본 예시값 '+completed.examples+'개는 검토 및 수정 후 사용하세요.':'',
         snapshot.excluded?'이번 요청의 처리 범위를 넘어 제외한 빈 셀 '+snapshot.excluded+'개':'',
         errors.length?'일부 AI 요청 실패 ('+errors.length+'/'+chunks.length+')':'',
         remaining?'입력되지 않는 셀 '+remaining+'개는 내용 검토 또는 추가 요청이 필요합니다.':''
       ].filter(Boolean)
-      const entries=pendingTableEdits.map(e=>e.label+' ['+(snapshot.targets.find(t=>t.cellId===e.cellId)?.address||e.cellId)+']\n  → '+e.value)
+      const entries=pendingTableEdits.map(e=>e.label+' ['+(snapshot.targets.find(t=>t.cellId===e.cellId)?.address||e.cellId)+']'+(isUnverifiedDraft(e.source)?' [예시·초안 확인]':' [제공 정보]')+'\n  → '+e.value)
       $('aiPreviewText').textContent=(entries.join('\n\n')||'자동 입력 가능한 내용이 없습니다.')+
         (warnings.length?'\n\n'+warnings.join('\n'):'')
       $('aiPreview').hidden=false
@@ -364,11 +376,14 @@ $('aiForm').onsubmit=async e=>{
     }
     const protectedIds=new Set(directEdits.map(x=>x.cellId))
     const proposals=[...directEdits,...rawEdits.filter(x=>!protectedIds.has(x?.cellId))]
-    pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,proposals):[]
+    const completed=requestedTableFill?completeDraft(snapshot,proposals,[],completionOptions):{edits:[],examples:0}
+    pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,completed.edits):[]
+    const sources=new Map(completed.edits.map(e=>[e.cellId,e.source]))
+    for(const edit of pendingTableEdits)edit.source=sources.get(edit.cellId)||edit.source
     pendingProposal=String(data.suggestion||'')
     $('aiApply').disabled = Boolean(requestedTableFill && !pendingTableEdits.length)
     if(pendingTableEdits.length){
-      const description=pendingTableEdits.map(e=>e.label+' : '+(e.before||'(빈칸)')+' → '+e.value).join('\n')
+      const description=pendingTableEdits.map(e=>e.label+(isUnverifiedDraft(e.source)?' [예시·초안]':' [제공 정보]')+' : '+(e.before||'(빈칸)')+' → '+e.value).join('\n')
       addMessage('assistant',reportMode?'업무보고서 '+pendingTableEdits.length+'개 항목을 한 번에 준비했습니다. 확인 후 적용해 주세요.\n'+description:'표 '+pendingTableEdits.length+'개 셀에 입력할 내용을 준비했습니다. 아래 미리보기에서 확인해 주세요.\n'+description)
       $('aiPreviewText').textContent=description
       $('aiApply').textContent=reportMode?'업무보고서 '+pendingTableEdits.length+'개 항목 일괄 적용':'표 '+pendingTableEdits.length+'개 셀에 적용'
@@ -385,15 +400,18 @@ $('aiForm').onsubmit=async e=>{
     }
     $('aiPreview').hidden=false
   }catch(err){
-    if(requestedTableFill && directEdits.length){
-      pendingTableEdits=validateTableEdits(pendingTableSnapshot,directEdits)
+    if(requestedTableFill && (directEdits.length||fillMode==='sample')){
+      const completed=completeDraft(snapshot,directEdits,[],completionOptions)
+      pendingTableEdits=validateTableEdits(pendingTableSnapshot,completed.edits)
+      const sources=new Map(completed.edits.map(e=>[e.cellId,e.source]))
+      for(const edit of pendingTableEdits)edit.source=sources.get(edit.cellId)||edit.source
       if(pendingTableEdits.length){
-        const preview=pendingTableEdits.map(e=>e.label+' : (빈칸) → '+e.value).join('\n')
+        const preview=pendingTableEdits.map(e=>e.label+(isUnverifiedDraft(e.source)?' [예시·초안]':' [제공 정보]')+' : (빈칸) → '+e.value).join('\n')
         $('aiPreviewText').textContent=preview
         $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
         $('aiApply').disabled=false
         $('aiPreview').hidden=false
-        addMessage('assistant','AI 호출 실패. 다만 사용자가 지정한 '+pendingTableEdits.length+'개 셀 값은 미리보기로 준비했습니다. 확인 후 적용할 수 있습니다.')
+        addMessage('assistant','AI 호출 실패로 예시값 또는 사용자 지정값 '+pendingTableEdits.length+'개만 준비했습니다. 실제 정보와 생성된 예시를 반드시 확인 후 적용해 주세요.')
       }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
     }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
   }
@@ -822,6 +840,18 @@ for(const [caption,message,local] of [
 }
 const modelRow=document.querySelector('.models')
 modelRow?.after(quickPanel)
+const fillControls=document.createElement('div')
+fillControls.className='ai-fill-mode'
+fillControls.innerHTML='<label for="aiFillMode">양식 자동완성</label><select id="aiFillMode" aria-label="양식 자동완성 모드">'+
+  '<option value="sample">전체 자동완성 · 예시값 사용</option>'+
+  '<option value="strict">실제 정보 우선 · 미확인 항목 비움</option></select>'+
+  '<small>예시값은 미리보기에서 확인하고 실제 정보로 수정해 주세요.</small>'
+document.querySelector('.models')?.after(fillControls)
+$('aiFillMode').value=fillMode
+$('aiFillMode').onchange=()=>{
+  fillMode=$('aiFillMode').value==='strict'?'strict':'sample'
+  toast(fillMode==='sample'?'전체 자동완성: 부족한 정보에 예시값을 제안합니다.':'실제 정보 우선: 확인되지 않은 항목을 비워 둡니다.')
+}
 const coordinateBar=document.createElement('div')
 coordinateBar.className='coordinate-toolbar'
 coordinateBar.innerHTML='<button type="button" id="coordinateToggle" aria-pressed="false">표 좌표 보기</button>'+
