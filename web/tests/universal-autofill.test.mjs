@@ -107,3 +107,15 @@ test('Pre-existing form cell content cannot be overwritten',()=>{
  applyTableEdits(validateTableEdits(snap,completed.edits))
  assert.equal(root.querySelectorAll('td')[1].textContent,'기존 부서')
 })
+
+test('Previously unseen labels in a new two-column form receive review placeholders',()=>{
+ const root=paper(['사업 개요','핵심 성과지표','검토 의견','서명란'])
+ const snap=captureLabeledForm(root)
+ assert.equal(snap.targets.length,4)
+ const completed=completeDraft(snap,[],[],{mode:'sample',today,profile,prompt:'신규 사업계획서 작성'})
+ assert.equal(completed.edits.length,4)
+ assert.ok(completed.edits.every(e=>e.value.length>0))
+ const sign=snap.targets.find(t=>t.label==='서명란')
+ const value=completed.edits.find(e=>e.cellId===sign.cellId).value
+ assert.match(value,/승인 전/)
+})
