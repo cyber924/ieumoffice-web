@@ -22,7 +22,7 @@ const ribbon = {
   ],
   '표': [
     ['표 삽입','insertTable'],['행 추가','addRow'],['열 추가','addColumn'],['행 삭제','deleteRow'],['열 삭제','deleteColumn'],
-    ['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 배경','cellBackground'],['테두리색','borderColor']
+    ['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 가운데','centerCell'],['표 가운데 배치','centerTable'],['셀 배경','cellBackground'],['테두리색','borderColor']
   ],
   '도구': [
     ['문서 검사','inspect'],['맞춤법 검사','spell'],['버전 비교','compare'],['AI 참고 검색','searchAI'],['문서 찾기','myDocuments']
@@ -59,6 +59,12 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     paper.focus()
   }
   function exec(command,value){
+    if(command==='justifyCenter'&&cell()){
+      const target=cell()
+      target.style.textAlign='center'
+      for(const p of target.querySelectorAll('p,div,h1,h2'))p.style.textAlign='center'
+      markDirty();toast('셀의 글자를 가운데 정렬했습니다.');return
+    }
     restore();document.execCommand(command,false,value);markDirty()
   }
   function cell(){return getCell()}
@@ -225,6 +231,14 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
       case 'deleteRow':rowDelete();break
       case 'deleteColumn':columnDelete();break
       case 'splitCell':splitCell();break
+      case 'centerCell':exec('justifyCenter');break
+      case 'centerTable':{
+        const target=table();if(!target)return toast('표 안에 커서를 두세요.')
+        if(isImported())return toast('가져온 문서의 표 위치 변경은 제한합니다.')
+        target.style.width='90%';target.style.marginLeft='auto';target.style.marginRight='auto'
+        target.dataset.centerTable='true'
+        markDirty();toast('표를 가운데 배치했습니다.');break
+      }
       case 'cellBackground':styleCell('backgroundColor','셀 배경색 (#RRGGBB)');break
       case 'borderColor':styleCell('borderColor','테두리색 (#RRGGBB)');break
       case 'inspect':inspect();break

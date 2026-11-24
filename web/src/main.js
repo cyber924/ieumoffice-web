@@ -1,7 +1,7 @@
 import './styles.css'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
-import {captureTableTargets,validateTableEdits,applyTableEdits} from './table-ai.js'
+import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
 
@@ -58,7 +58,17 @@ function markDirty(){
     }catch{setStatus('로컬 임시 저장 용량 초과 · 파일로 저장해 주세요.')}
   },350)
 }
-function exec(command,value){paper.focus();document.execCommand(command,false,value);markDirty()}
+function exec(command,value){
+  if(command==='justifyCenter'){
+    const cell=getCell()
+    if(cell&&paper.contains(cell)){
+      cell.style.textAlign='center'
+      for(const p of cell.querySelectorAll('p,div,h1,h2'))p.style.textAlign='center'
+      markDirty();toast('선택한 표 셀을 가운데 정렬했습니다.');return
+    }
+  }
+  paper.focus();document.execCommand(command,false,value);markDirty()
+}
 for(const [id,cmd,val] of [['bold','bold'],['italic','italic'],['underline','underline'],['undo','undo'],['redo','redo'],['alignLeft','justifyLeft'],['alignCenter','justifyCenter']])$(id).onclick=()=>exec(cmd,val)
 $('filename').addEventListener('input',markDirty)
 paper.addEventListener('input',markDirty)
@@ -196,6 +206,8 @@ $('aiForm').onsubmit=async e=>{
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
+  const today=new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'})
+  const directEdits=requestedTableFill?inferTableValues(snapshot,prompt,{today}):[]
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
@@ -203,7 +215,9 @@ $('aiForm').onsubmit=async e=>{
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
-    pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,rawEdits):[]
+    const protectedIds=new Set(directEdits.map(x=>x.cellId))
+    const proposals=[...directEdits,...rawEdits.filter(x=>!protectedIds.has(x?.cellId))]
+    pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,proposals):[]
     pendingProposal=String(data.suggestion||'')
     $('aiApply').disabled = Boolean(requestedTableFill && !pendingTableEdits.length)
     if(pendingTableEdits.length){
