@@ -531,3 +531,31 @@ async function searchReferences(){
  }
 }
 installRibbon({paper,isImported:()=>Boolean(state),markDirty,toast,getCell,inspect:documentInspection,compare:compareHistory,searchAI:searchReferences})
+
+// Compact AI workspace shortcuts. All generation actions use existing login,
+// provider key controls, AI review, and explicit approval before document edits.
+const quickPanel=document.createElement('section')
+quickPanel.className='ai-quick-actions'
+quickPanel.setAttribute('aria-label','AI 문서 작업 바로가기')
+const label=document.createElement('div');label.className='overline';label.textContent='AI 문서 도구'
+quickPanel.append(label)
+for(const [caption,message,local] of [
+ ['문서 요약','현재 문서에서 중요한 내용을 다섯 문장 이내로 요약해 줘.',false],
+ ['맞춤법·교정','현재 문서의 맞춤법과 어색한 표현을 검토하고 수정안을 제시해 줘. 문서는 수정하지 마.',false],
+ ['표 자동입력','표에서 비어 있는 제목, 작성자, 작성일 등 항목을 사용자가 제공한 정보만으로 채워 줘. 알 수 없는 값은 빈칸으로 둬.',false],
+ ['기존 문서 검색','',true],
+ ['양식 오류 검사','',true]
+]){
+ const button=document.createElement('button')
+ button.type='button';button.textContent=caption
+ button.onclick=()=>{
+  if(local){if(caption==='기존 문서 검색')searchReferences();else documentInspection();return}
+  $('aiPrompt').value=message
+  $('aiPrompt').focus()
+  toast('AI 요청을 입력했습니다. 내용을 확인한 뒤 작성 요청을 눌러 주세요.')
+ }
+ quickPanel.append(button)
+}
+const modelRow=document.querySelector('.models')
+modelRow?.after(quickPanel)
+
