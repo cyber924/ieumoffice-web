@@ -13,6 +13,11 @@ test('new HWPX reopens with Korean text and native table',async()=>{
  const bytes=new Uint8Array(await blob.arrayBuffer());const reopened=new HwpDocument(bytes);assert.ok(reopened.pageCount()>0);reopened.free()
  const zip=await JSZip.loadAsync(bytes);const xml=await zip.file('Contents/section0.xml').async('string')
  assert.match(xml,/<hp:tbl\b/);assert.match(xml,/홍길동/)
+ const header=await zip.file('Contents/header.xml').async('string')
+ const ids=[...xml.matchAll(/<hp:tc\b[^>]*borderFillIDRef="(\d+)"/g)].map(x=>x[1])
+ assert.equal(ids.length,4)
+ for(const id of ids){const b=header.match(new RegExp('<hh:borderFill\\b[^>]*\\bid="'+id+'"[^>]*>[\\s\\S]*?</hh:borderFill>'))?.[0]||'';for(const side of ['left','right','top','bottom'])assert.match(b,new RegExp('<hh:'+side+'Border[^>]*type="SOLID"'))}
+
 })
 test('conversion blocks unsupported images instead of losing them',async()=>{
  await assert.rejects(exportHwpx(paper('<p>본문</p><img src="x">'),load),/그림이나 도형/)

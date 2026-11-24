@@ -227,7 +227,7 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   host.append(withLabel(isTranslate?'번역 언어':'문체 스타일',select),run,status,preview,apply)
  }
  function notices(){
-  const host=modal('기업마당 지원사업 공고','공식 기업마당 공고 제목과 사업개요만 표시합니다. 첨부파일은 저장하지 않고 원문에서 확인합니다.')
+  const host=modal('기업마당 지원사업 공고','기업마당 최신 공고의 제목과 신청 정보를 표시합니다. 사업개요와 첨부파일은 원문에서 확인합니다.')
   const filter=el('select')
   for(const [value,title] of [['','전체'],['01','금융'],['02','기술'],['03','인력'],['04','수출'],['05','내수'],['06','창업'],['07','경영'],['09','기타']]){
    const op=el('option','',title);op.value=value;filter.append(op)
@@ -236,23 +236,23 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   const list=el('div','milo-list')
   const link=button('기업마당 공식 지원사업공고 열기',()=>external('https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/list.do'))
   const refresh=async()=>{
-   status.textContent='공식 API에서 공고 조회 중…';list.replaceChildren()
+   status.textContent='기업마당 최신 공고 조회 중…';list.replaceChildren()
    try{
     const r=await fetch('/api/bizinfo?field='+encodeURIComponent(filter.value))
     const data=await parseJSON(r)
-    if(!r.ok)throw Error(data.message||'기업마당 API 연결 실패')
+    if(!r.ok)throw Error(data.message||'기업마당 연결 실패')
     for(const n of data.items||[]){
      const row=el('article','milo-notice-row')
-     row.append(el('strong','',n.title),el('p','',n.content||'사업개요 내용 없음'))
+     row.append(el('strong','',n.title),el('p','',n.content||'신청 정보는 원문에서 확인해 주세요.'))
      row.append(button('기업마당 원문 열기',()=>external(n.url),'milo-primary'))
      row.append(button('사업계획서 프롬프트로 연결',()=>{
-      setPrompt('다음 기업마당 지원사업 공고의 제목과 사업개요를 참고하여 지원사업 사업계획서 초안을 작성해 줘. 공고의 원문과 신청 조건은 반드시 공식 페이지에서 확인하게 안내해.\\n공고: '+n.title+'\\n사업개요: '+n.content)
+      setPrompt('다음 기업마당 지원사업 공고의 제목과 신청 정보를 참고하여 지원사업 사업계획서 초안을 작성해 줘. 공고의 원문과 신청 조건은 반드시 공식 페이지에서 확인하게 안내해.\\n공고: '+n.title+'\\n신청 정보: '+n.content)
       document.querySelector('#modal')?.close()
       toast('공고를 참고하는 프롬프트를 AI 입력창에 넣었습니다.')
      }))
      list.append(row)
     }
-    status.textContent=(data.items||[]).length+'개 공고 · 상세·첨부는 기업마당 원문에서 확인'
+    status.textContent=(data.items||[]).length+'개 공고 · 최신 목록 기준, 상세·첨부는 기업마당 원문에서 확인'
    }catch(e){status.textContent=e.message+' · 공식 사이트에서 열어 볼 수 있어요.'}
   }
   filter.onchange=refresh

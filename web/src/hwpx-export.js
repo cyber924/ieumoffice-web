@@ -19,7 +19,16 @@ export async function exportHwpx(paper,loadEngine=engine){
  let bytes
  try{
   doc.createBlankDocument()
-  const result=JSON.parse(doc.pasteHtml(0,0,0,paper.innerHTML))
+  // Stylesheets are not part of innerHTML: materialize the visible grid on a copy.
+  const copy=paper.cloneNode(true)
+  for(const cell of copy.querySelectorAll('td,th')){
+   const style=cell.style
+   for(const side of ['Top','Right','Bottom','Left']){
+    if(!style['border'+side+'Style'] || style['border'+side+'Style']==='none')
+     style['border'+side]='1px solid #000000'
+   }
+  }
+  const result=JSON.parse(doc.pasteHtml(0,0,0,copy.innerHTML))
   if(!result.ok)throw new Error('본문을 한글 문서로 변환하지 못했습니다.')
   const exported=doc.exportHwpxWithReport()
   try{
