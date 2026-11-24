@@ -420,11 +420,17 @@ $('aiForm').onsubmit=async e=>{
 $('aiReject').onclick=()=>{$('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null}
 $('aiApply').onclick=()=>{
   if(pendingTableEdits.length){
+    const reviewCount=pendingTableEdits.filter(x=>isUnverifiedDraft(x.source)).length
     const applied=applyTableEdits(pendingTableEdits)
     pendingTableEdits=[];pendingTableSnapshot=null;pendingProposal=''
     $('aiPreview').hidden=true
-    if(applied){markDirty();refreshDocumentMap();toast('표 '+applied+'개 셀에 적용했습니다. 저장하여 확인하세요.')}
-    else toast('표가 수정되어 적용하지 않았습니다. 다시 AI에게 요청하세요.')
+    if(applied){
+      markDirty();refreshDocumentMap()
+      if(reviewCount){
+        setNotice('예시·AI 초안 '+reviewCount+'개가 포함된 문서입니다. 실제 제출·결재 전에 이름, 금액, 내용 등을 검토하고 수정하세요.')
+      }
+      toast('표 '+applied+'개 셀을 적용했습니다.'+(reviewCount?' 예시·AI 초안 '+reviewCount+'개를 확인해 주세요.':' 저장하여 확인하세요.'))
+    }else toast('표가 수정되어 적용하지 않았습니다. 다시 AI에게 요청하세요.')
     return
   }
   if(!pendingProposal)return toast('적용할 수정안이 없습니다.')
