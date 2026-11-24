@@ -3,6 +3,7 @@ import {installMediaTools} from './media-tools.js'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
+import {captureBusinessReport,isReportFillRequest,proposeBusinessReport,reportMissingFields} from './business-report.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
 
@@ -203,13 +204,16 @@ $('aiForm').onsubmit=async e=>{
   // Only explicitly selected, authenticated user's documents become AI context.
   const selectedReferences=referenceSnapshot.slice(0,3)
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
-  const tableIntent=/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
-  const snapshot=tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null
+  const report=isReportFillRequest(prompt)?captureBusinessReport(paper):null
+  const reportMode=Boolean(report?.recognized)
+  const tableIntent=reportMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
+  const snapshot=reportMode?report:(tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null)
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
-  const today=new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'})
-  const directEdits=requestedTableFill?inferTableValues(snapshot,prompt,{today}):[]
+  const today=new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'long',day:'numeric'}).format(new Date())
+  const directEdits=requestedTableFill?(reportMode?proposeBusinessReport(snapshot,prompt,{today}):inferTableValues(snapshot,prompt,{today})):[]
+  const directFieldCount=directEdits.length
   addMessage('user',prompt)
   $('aiPrompt').value='';$('aiSend').disabled=true;$('aiStatus').textContent='AI 요청 중…'
   try{
@@ -225,10 +229,21 @@ $('aiForm').onsubmit=async e=>{
       $('aiPreview').hidden=false
       return
     }
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?'table':'text'})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
+    if(reportMode){
+      // The server returns one proposal per field; the UI maps fields
+      // to actual cells rather than trusting model-generated coordinates.
+      const byKey=new Map(snapshot.targets.map(t=>[t.fieldKey,t]))
+      const modelProposals=Array.isArray(data.fields)?data.fields:[]
+      for(const proposal of modelProposals){
+        const target=byKey.get(proposal?.fieldKey)
+        if(!target||typeof proposal.value!=='string'||!proposal.value.trim())continue
+        rawEdits.push({cellId:target.cellId,value:proposal.value.slice(0,1000)})
+      }
+    }
     const check=data.diagnostics
     if(requestedTableFill && check?.candidateCells===0){
       toast('AI가 표 후보 셀을 받지 못했습니다. 문서 안에 표가 있는지 확인해 주세요.')
@@ -240,9 +255,13 @@ $('aiForm').onsubmit=async e=>{
     $('aiApply').disabled = Boolean(requestedTableFill && !pendingTableEdits.length)
     if(pendingTableEdits.length){
       const description=pendingTableEdits.map(e=>e.label+' : '+(e.before||'(빈칸)')+' → '+e.value).join('\n')
-      addMessage('assistant','표 '+pendingTableEdits.length+'개 셀에 입력할 내용을 준비했습니다. 아래 미리보기에서 확인해 주세요.\n'+description)
+      addMessage('assistant',reportMode?'업무보고서 '+pendingTableEdits.length+'개 항목을 한 번에 준비했습니다. 확인 후 적용해 주세요.\n'+description:'표 '+pendingTableEdits.length+'개 셀에 입력할 내용을 준비했습니다. 아래 미리보기에서 확인해 주세요.\n'+description)
       $('aiPreviewText').textContent=description
-      $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
+      $('aiApply').textContent=reportMode?'업무보고서 '+pendingTableEdits.length+'개 항목 일괄 적용':'표 '+pendingTableEdits.length+'개 셀에 적용'
+      if(reportMode && pendingTableEdits.length<snapshot.targets.length){
+        const missing=reportMissingFields(snapshot,pendingTableEdits)
+        $('aiPreviewText').textContent+='\n\n입력 보류 ('+missing.length+'개): '+missing.join(' · ')
+      }
     }else{
       addMessage('assistant',pendingProposal||(requestedTableFill?'표의 빈칸 '+snapshot.targets.length+'개를 인식했지만 적용할 AI 제안이 없습니다. 사업명·작성 목적 등을 구체적으로 입력해 주세요.':'적용할 제안이 없습니다.'))
       $('aiPreviewText').textContent=pendingProposal||'표 구조를 보호하기 위해 변경하지 않았습니다.'
