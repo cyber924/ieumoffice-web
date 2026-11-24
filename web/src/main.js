@@ -229,6 +229,10 @@ $('aiForm').onsubmit=async e=>{
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
+    const check=data.diagnostics
+    if(requestedTableFill && check?.candidateCells===0){
+      toast('AI가 표 후보 셀을 받지 못했습니다. 문서 안에 표가 있는지 확인해 주세요.')
+    }
     const protectedIds=new Set(directEdits.map(x=>x.cellId))
     const proposals=[...directEdits,...rawEdits.filter(x=>!protectedIds.has(x?.cellId))]
     pendingTableEdits=pendingTableSnapshot?validateTableEdits(pendingTableSnapshot,proposals):[]
@@ -240,7 +244,7 @@ $('aiForm').onsubmit=async e=>{
       $('aiPreviewText').textContent=description
       $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
     }else{
-      addMessage('assistant',pendingProposal||'일치하는 표 입력값을 찾지 못했어요. 수정할 셀을 먼저 선택하거나 내용을 구체적으로 요청해 주세요.')
+      addMessage('assistant',pendingProposal||(requestedTableFill?'표의 빈칸 '+snapshot.targets.length+'개를 인식했지만 적용할 AI 제안이 없습니다. 사업명·작성 목적 등을 구체적으로 입력해 주세요.':'적용할 제안이 없습니다.'))
       $('aiPreviewText').textContent=pendingProposal||'표 구조를 보호하기 위해 변경하지 않았습니다.'
       if(requestedTableFill)pendingProposal=''
       $('aiApply').textContent='문서에 적용'
