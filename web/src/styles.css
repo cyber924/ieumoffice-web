@@ -113,3 +113,12 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 .ai-fill-mode label{font-size:11px;font-weight:650;color:#3e5273}
 .ai-fill-mode select{max-width:100%;padding:6px 8px;border:1px solid #cddbf6;border-radius:7px;font-size:11px;background:white;color:#294575}
 .ai-fill-mode small{display:block;width:100%;font-size:10px;color:#667b93;line-height:1.5}
+
+/* Planned document design, explicit memory status and review controls */
+.document-design-tools{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:7px 0;border-top:1px solid #e9edf5}
+.document-design-tools button{border:1px solid #cbd9ec;border-radius:7px;background:#f8fbff;padding:7px 11px;font-size:11px;color:#2b4c79}
+.document-design-tools button:hover{background:#e8f0ff;border-color:#9ab5ef}
+#templateMemoryStatus{font-size:10px;color:#667b93;max-width:360px;overflow-wrap:anywhere}
+#designSummary{margin:12px 0;font-size:12px;line-height:1.6;color:#52627a}
+#designSummary p{margin:5px 0}
+@media print{.document-design-tools{display:none!important}}

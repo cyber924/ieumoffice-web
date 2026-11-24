@@ -12,7 +12,7 @@ function grid(table){
    if(hint!==null&&Number.isInteger(+hint)&&+hint>=0&&+hint<=128)c=+hint
    const colspan=Math.max(1,Math.min(40,Number(cell.colSpan)||1))
    const rowspan=Math.max(1,Math.min(80,Number(cell.rowSpan)||1))
-   const name=(c===0 || r===0 || cell.tagName==='TH')?labelCell(cell):''
+   const name=(c===0 || cell.tagName==='TH')?labelCell(cell):''
    out.push({r,c,w:colspan,h:rowspan,label:name})
    for(let y=r+1;y<r+rowspan;y++)for(let x=c;x<c+colspan;x++)taken.add(y+':'+x)
    c+=colspan
