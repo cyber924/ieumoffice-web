@@ -1,6 +1,7 @@
 import './styles.css'
 import {markdownToDocumentHtml} from './document-markdown.js'
 import {exportHwpx} from './hwpx-export.js'
+import {ensureHwpxTableBorders} from './hwpx-borders.js'
 import {installMediaTools} from './media-tools.js'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
@@ -152,7 +153,7 @@ async function blobForSave(){
   const blob=state?await savePackage(state,paper):await exportNewDocx(paper)
   // Reject a DOCX before any download/upload if native table elements are missing.
   if(!state || state.type==='docx')await validateDocxTables(blob,paper)
-  return blob
+  return state?.type==='hwpx'?await ensureHwpxTableBorders(blob):blob
 }
 $('saveFile').onclick=async()=>{
   const b=$('saveFile');b.disabled=true;setStatus('문서 파일 생성 중…')
@@ -191,7 +192,7 @@ $('fileInput').onchange=async e=>{
 $('saveHwpx').onclick=async()=>{
   const button=$('saveHwpx');button.disabled=true;setStatus('HWPX 문서 생성 중…')
   try{
-    const blob=state?.type==='hwpx'?await savePackage(state,paper):await exportHwpx(paper)
+    const blob=await ensureHwpxTableBorders(state?.type==='hwpx'?await savePackage(state,paper):await exportHwpx(paper))
     download(blob,safeFilename(fileName(),'hwpx'))
     setStatus('HWPX 다운로드 완료 · 한글에서 서식을 확인해 주세요.')
     toast('HWPX 파일을 저장했습니다. 복잡한 서식은 한글에서 확인하세요.')
