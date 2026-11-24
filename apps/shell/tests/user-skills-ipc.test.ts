@@ -1,0 +1,312 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { USER_SKILLS_CHANNELS as C } from '@genoffice/electron-utils/user-skills-channels'
+import type { UserSkillsService } from '../src/main/user-skills/user-skills-service'
+
+/**
+ * The skills channels in main (src/main/user-skills/user-skills-ipc.ts): the
+ * settings screen alone may change skills; any window may list them, read
+ * them for the AI and save a card; malformed requests are refused before the
+ * service is reached; a change is broadcast to every window.
+ */
+
+type Handler = (event: unknown, ...args: unknown[]) => unknown
+
+const mocks = vi.hoisted(() => ({
+  handlers: new Map<string, Handler>(),
+  sent: [] as Array<{ id: number; channel: string }>,
+}))
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler),
+  },
+  BrowserWindow: { fromWebContents: () => null },
+  dialog: {
+    showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })),
+    showSaveDialog: vi.fn(async () => ({ canceled: true })),
+  },
+  shell: { openPath: vi.fn(async () => '') },
+  webContents: {
+    getAllWebContents: () =>
+      [settings, editor].map((wc) => ({
+        id: wc.id,
+        isDestroyed: () => false,
+        send: (channel: string) => mocks.sent.push({ id: wc.id, channel }),
+      })),
+  },
+}))
+
+const settings = { id: 1, once: vi.fn(), isDestroyed: () => false }
+const editor = { id: 2, once: vi.fn(), isDestroyed: () => false }
+const agent = { id: 3, once: vi.fn(), isDestroyed: () => false }
+
+const service = {
+  list: vi.fn(async () => []),
+  setState: vi.fn(async () => ({ ok: true })),
+  remove: vi.fn(async () => ({ ok: true })),
+  saveFromCard: vi.fn(async () => ({ ok: true, id: 'app:x' })),
+  aiRead: vi.fn(async () => ({ ok: false, reason: 'disabled' })),
+  aiReadFile: vi.fn(async () => ({ ok: false, reason: 'outside' })),
+  copyToMine: vi.fn(async () => ({ ok: false, reason: 'exists' })),
+  prepare: vi.fn(async (source: { kind: string }) => ({
+    origin: source.kind === 'text' ? { kind: 'text' } : { kind: source.kind, file: 'f' },
+    root: 'r',
+    candidates: [],
+    rootLicense: undefined,
+    tempDir: undefined,
+  })),
+  readImported: vi.fn(async () => ({
+    ok: true,
+    content: { body: { text: 'b', truncated: false }, files: [] },
+  })),
+  readImportedFile: vi.fn(async () => ({ ok: true, file: { text: 'f', truncated: false } })),
+  exportBundleTo: vi.fn(async () => ({ ok: true, path: 'p' })),
+  exportInfo: vi.fn(async () => ({ ok: true, fileName: 'a.zip', includesTemplate: false })),
+  versions: vi.fn(async () => ({ ok: true, versions: [] })),
+  compareVersion: vi.fn(async () => ({ ok: true, diff: { same: true, skillMd: [], files: [] } })),
+  restoreVersion: vi.fn(async () => ({ ok: true, id: 'app:a' })),
+  removeVersion: vi.fn(async () => ({ ok: true })),
+}
+
+const { registerUserSkillsIpc } = await import('../src/main/user-skills/user-skills-ipc')
+const { userSkillsManageGate } = await import('../src/main/agent/agent-skills')
+const openSettings = vi.fn()
+const ipc = registerUserSkillsIpc({
+  service: service as unknown as UserSkillsService,
+  canManage: userSkillsManageGate({
+    isMainWindow: (sender) => sender === (settings as unknown),
+    isAgentWindow: (sender) => sender === (agent as unknown),
+  }),
+  openSettings,
+  agentNoticeDue: () => true,
+  markAgentNoticeSeen: () => undefined,
+})
+
+const call = (channel: string, sender: object, ...args: unknown[]) =>
+  mocks.handlers.get(channel)!({ sender }, ...args)
+
+beforeEach(() => {
+  mocks.sent.length = 0
+  for (const fn of Object.values(service)) fn.mockClear()
+})
+
+describe('who may do what', () => {
+  it('refuses changes from an editor window', async () => {
+    expect(await call(C.setState, editor, 'app:a', { enabled: false })).toEqual({
+      ok: false,
+      reason: 'not-allowed',
+    })
+    expect(await call(C.remove, editor, 'app:a')).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.importGitHub, editor, 'owner/repo')).toMatchObject({
+      reason: 'not-allowed',
+    })
+    expect(service.setState).not.toHaveBeenCalled()
+    expect(service.remove).not.toHaveBeenCalled()
+  })
+
+  it('lets the agent window make only the install-preview calls', async () => {
+    expect(await call(C.setState, agent, 'app:a', { enabled: false })).toMatchObject({
+      reason: 'not-allowed',
+    })
+    expect(await call(C.remove, agent, 'app:a')).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.copyToMine, agent, 'app:a')).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.importFolder, agent)).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.checkUpdate, agent, 'app:a')).toMatchObject({ reason: 'not-allowed' })
+    // past the gate: a token the agent window never previewed is not found
+    expect(await call(C.install, agent, { token: 't', selected: ['k'] })).toMatchObject({
+      reason: 'not-found',
+    })
+    expect(await call(C.cancelImport, agent, 't')).toEqual({ ok: true })
+    expect(service.setState).not.toHaveBeenCalled()
+    expect(service.remove).not.toHaveBeenCalled()
+    expect(service.copyToMine).not.toHaveBeenCalled()
+  })
+
+  it('lets the settings screen change a state and tells every window', async () => {
+    expect(await call(C.setState, settings, 'app:a', { enabled: false })).toEqual({ ok: true })
+    expect(service.setState).toHaveBeenCalledWith('app:a', { enabled: false })
+    expect(mocks.sent.map((entry) => entry.channel)).toEqual([C.changed, C.changed])
+  })
+
+  it('keeps the earlier versions of a skill to the settings screen', async () => {
+    const version = '20261110T093000000Z-edit'
+    for (const other of [editor, agent]) {
+      expect(await call(C.versions, other, 'app:a')).toMatchObject({ reason: 'not-allowed' })
+      expect(await call(C.compareVersion, other, 'app:a', version)).toMatchObject({
+        reason: 'not-allowed',
+      })
+      expect(await call(C.restoreVersion, other, 'app:a', version)).toMatchObject({
+        reason: 'not-allowed',
+      })
+      expect(await call(C.removeVersion, other, 'app:a', version)).toMatchObject({
+        reason: 'not-allowed',
+      })
+    }
+    expect(service.versions).not.toHaveBeenCalled()
+    expect(service.restoreVersion).not.toHaveBeenCalled()
+    expect(service.removeVersion).not.toHaveBeenCalled()
+
+    expect(await call(C.versions, settings, 'app:a')).toEqual({ ok: true, versions: [] })
+    expect(await call(C.compareVersion, settings, 'app:a', version)).toMatchObject({ ok: true })
+    expect(await call(C.removeVersion, settings, 'app:a', version)).toEqual({ ok: true })
+    expect(mocks.sent).toEqual([])
+    // going back changes the skill: every window reads the list again
+    expect(await call(C.restoreVersion, settings, 'app:a', version)).toEqual({
+      ok: true,
+      id: 'app:a',
+    })
+    expect(service.restoreVersion).toHaveBeenCalledWith('app:a', version)
+    expect(mocks.sent.map((entry) => entry.channel)).toEqual([C.changed, C.changed])
+
+    expect(await call(C.restoreVersion, settings, 'app:a', 7)).toMatchObject({
+      reason: 'invalid',
+    })
+    expect(await call(C.restoreVersion, settings, 'app:a', 'x'.repeat(65))).toMatchObject({
+      reason: 'invalid',
+    })
+    expect(service.restoreVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets any window save a card and read for the AI', async () => {
+    const input = { title: 'T', name: 'n', description: 'd', body: 'b', invoke: 'auto' }
+    expect(await call(C.saveFromCard, editor, input)).toEqual({ ok: true, id: 'app:x' })
+    expect(await call(C.aiRead, editor, 'user:a')).toEqual({ ok: false, reason: 'disabled' })
+    expect(await call(C.aiReadFile, editor, 'app:a', '../x.md')).toEqual({
+      ok: false,
+      reason: 'outside',
+    })
+    await call(C.openSettings, editor)
+    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(await call(C.agentNotice, editor)).toBe(true)
+  })
+
+  it('refuses malformed requests before the service', async () => {
+    expect(await call(C.setState, settings, 'no-colon', { enabled: true })).toMatchObject({
+      reason: 'invalid',
+    })
+    expect(await call(C.setState, settings, 'app:a', { color: 'red' })).toMatchObject({
+      reason: 'invalid',
+    })
+    expect(await call(C.saveFromCard, editor, { title: 'T' })).toMatchObject({ reason: 'invalid' })
+    expect(await call(C.aiReadFile, editor, 'app:a', 5)).toMatchObject({ reason: 'invalid' })
+    expect(service.setState).not.toHaveBeenCalled()
+    expect(service.saveFromCard).not.toHaveBeenCalled()
+  })
+
+  it('does not broadcast a refused change', async () => {
+    expect(await call(C.copyToMine, settings, 'user:a', false)).toEqual({
+      ok: false,
+      reason: 'exists',
+    })
+    expect(mocks.sent).toEqual([])
+  })
+
+  it('answers an install with an unknown token as not found', async () => {
+    expect(
+      await call(C.install, settings, { token: 'nope', selected: [], onCollision: {} }),
+    ).toEqual({ ok: false, reason: 'not-found' })
+  })
+})
+
+describe('skills dropped on a window and pasted text', () => {
+  it('keeps a dropped file for the settings screen, which previews it once', async () => {
+    ipc.queueDropped({ kind: 'zip', file: 'C:/dl/pack.zip' })
+    expect(mocks.sent.map((entry) => entry.channel)).toEqual([C.dropped, C.dropped])
+    expect(await call(C.takeDropped, editor)).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.takeDropped, agent)).toMatchObject({ reason: 'not-allowed' })
+    const taken = (await call(C.takeDropped, settings)) as {
+      ok: boolean
+      preview: { origin: { kind: string } } | null
+    }
+    expect(taken.ok).toBe(true)
+    expect(taken.preview?.origin).toEqual({ kind: 'zip' })
+    expect(service.prepare).toHaveBeenCalledWith({ kind: 'zip', file: 'C:/dl/pack.zip' })
+    expect(await call(C.takeDropped, settings)).toEqual({ ok: true, preview: null })
+  })
+
+  it('turns a drop that held no skill into the "no skill found" answer, once', async () => {
+    ipc.queueDropped({ kind: 'no-skills' })
+    expect(mocks.sent.map((entry) => entry.channel)).toEqual([C.dropped, C.dropped])
+    expect(await call(C.takeDropped, settings)).toEqual({ ok: false, reason: 'no-skills' })
+    expect(service.prepare).not.toHaveBeenCalled()
+    expect(await call(C.takeDropped, settings)).toEqual({ ok: true, preview: null })
+  })
+
+  it('reads a previewed import only for the window that previewed it', async () => {
+    const mine = (await call(C.importText, settings, '---\nname: a\n---')) as {
+      preview: { token: string }
+    }
+    const token = mine.preview.token
+    expect(await call(C.readImport, settings, token, 'a')).toMatchObject({
+      ok: true,
+      content: { body: { text: 'b' } },
+    })
+    expect(await call(C.readImportFile, settings, token, 'a', 'notes.md')).toMatchObject({
+      ok: true,
+      file: { text: 'f' },
+    })
+    expect(service.readImportedFile).toHaveBeenCalledWith(expect.anything(), 'a', 'notes.md')
+
+    // another window may pass the gate but never reads someone else's preview
+    expect(await call(C.readImport, agent, token, 'a')).toMatchObject({ reason: 'not-found' })
+    expect(await call(C.readImport, editor, token, 'a')).toMatchObject({ reason: 'not-allowed' })
+    expect(await call(C.readImport, settings, 'unknown', 'a')).toMatchObject({
+      reason: 'not-found',
+    })
+    expect(await call(C.readImport, settings, token, 7)).toMatchObject({ reason: 'invalid' })
+    expect(await call(C.readImportFile, settings, token, 'a', 7)).toMatchObject({
+      reason: 'invalid',
+    })
+    expect(service.readImported).toHaveBeenCalledTimes(1)
+
+    await call(C.cancelImport, settings, token)
+    expect(await call(C.readImport, settings, token, 'a')).toMatchObject({ reason: 'not-found' })
+  })
+
+  it('previews pasted text from the settings screen only, and refuses what is not text', async () => {
+    expect(await call(C.importText, editor, '---\nname: a\n---')).toMatchObject({
+      reason: 'not-allowed',
+    })
+    expect(await call(C.importText, settings, 42)).toMatchObject({ reason: 'invalid' })
+    expect(await call(C.importText, settings, 'x'.repeat(2_000_001))).toMatchObject({
+      reason: 'invalid',
+    })
+    const answer = (await call(C.importText, settings, '---\nname: a\n---')) as {
+      preview: { origin: unknown }
+    }
+    expect(answer.preview.origin).toEqual({ kind: 'text' })
+    expect(service.prepare).toHaveBeenCalledTimes(1)
+    expect(service.prepare).toHaveBeenCalledWith({ kind: 'text', text: '---\nname: a\n---' })
+  })
+
+  it('refuses a bundle export without skill identifiers before asking where to save', async () => {
+    expect(await call(C.exportBundle, settings, [])).toMatchObject({ reason: 'invalid' })
+    expect(await call(C.exportBundle, settings, ['no-colon'])).toMatchObject({ reason: 'invalid' })
+    expect(await call(C.exportBundle, editor, ['app:a'])).toMatchObject({ reason: 'not-allowed' })
+    // the save dialog of this test is cancelled
+    expect(await call(C.exportBundle, settings, ['app:a', 'app:b'])).toMatchObject({
+      reason: 'cancelled',
+    })
+    expect(service.exportBundleTo).not.toHaveBeenCalled()
+  })
+
+  it('suggests a bundle file name from the words the screen made, or the one skill it holds', async () => {
+    const { dialog } = await import('electron')
+    const suggested = () =>
+      (vi.mocked(dialog.showSaveDialog).mock.lastCall as unknown as [{ defaultPath: string }])[0]
+        .defaultPath
+
+    await call(C.exportBundle, settings, ['app:a', 'app:b'], '회의록: "정리" 외 1개')
+    expect(suggested()).toBe('회의록 정리 외 1개.zip')
+
+    await call(C.exportBundle, settings, ['app:a', 'app:b'])
+    expect(suggested()).toBe('skills.zip')
+    await call(C.exportBundle, settings, ['app:a', 'app:b'], { not: 'text' })
+    expect(suggested()).toBe('skills.zip')
+
+    // one skill: the name its own export uses, whatever the screen sent
+    await call(C.exportBundle, settings, ['app:a'], 'anything')
+    expect(service.exportInfo).toHaveBeenCalledWith('app:a')
+    expect(suggested()).toBe('a.zip')
+  })
+})

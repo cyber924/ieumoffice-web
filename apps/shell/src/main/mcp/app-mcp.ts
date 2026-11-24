@@ -1,0 +1,347 @@
+import { PRODUCT_NAME } from '@genoffice/i18n'
+import { DEFAULT_MCP_PORT } from './constants'
+import type { McpServerService, McpToolDefinition } from './mcp-server'
+import { McpLogger } from './mcp-logger'
+import type { CliRunner } from './cli-runner'
+import type { DocsControl } from './tools/document-tools'
+import type { SlidesControl } from './tools/slides-tools'
+import type { SheetsControl } from './tools/sheets-tools'
+import type { FamilyDriver, TargetResolver } from './tools/session-tools'
+import type { OpenDocumentsControl } from './tools/open-documents-tools'
+import type { DiagramControl } from './tools/diagram-tools'
+import type { WhiteboardControl } from './tools/whiteboard-tools'
+
+/**
+ * Main-process wiring for the MCP server.
+ *
+ * Owns the single service instance, reads the enable/port settings, and exposes
+ * the small surface the shell's IPC handlers and lifecycle hooks need. Deps are
+ * injected (`configureMcpRuntime`) so this module never imports `index.ts`
+ * back, and stays testable.
+ */
+
+export interface McpRuntimeDeps {
+  /** app version reported by get_app_info */
+  version: string
+  /** default folder for generated files */
+  defaultSaveDir: () => string
+  /** open a file in the UI (routed to the matching tab) */
+  openPath: (filePath: string) => boolean
+  /** drive a visible docs editor (live document session); absent in headless runs */
+  docsControl?: DocsControl
+  /** drive a visible slides deck (main-process session); absent in headless runs */
+  slidesControl?: SlidesControl
+  /** drive a visible sheets grid (renderer workbook session); absent in headless runs */
+  sheetsControl?: SheetsControl
+  /** the bundled genoffice CLI, backing the headless create/read tools; absent when unavailable */
+  cliRunner?: CliRunner
+  /**
+   * documents the user has open (list/read/close); absent in headless runs,
+   * where there is no tab manager to ask
+   */
+  openDocumentsControl?: OpenDocumentsControl
+  /**
+   * resolves a `document` argument (tab id or path) to the webContents of that
+   * open tab, so the content tools can edit what the user is looking at instead
+   * of only the session's own blank tab; absent in headless runs, which drops
+   * the argument from the tool schemas
+   */
+  resolveTarget?: TargetResolver
+  /**
+   * open diagram tabs for read_diagram / apply_diagram_ops; absent in headless
+   * runs, where the two tools answer that the app is not running
+   */
+  diagramControl?: DiagramControl
+  /**
+   * open whiteboard tabs for read_whiteboard / apply_whiteboard_ops
+   */
+  whiteboardControl?: WhiteboardControl
+  /** where the MCP log file lives (userData); logging is unavailable without it */
+  logFilePath?: string
+}
+
+export interface McpSettings {
+  enabled: boolean
+  port: number
+  /** headless create_docx (no UI) is exposed to clients; default off */
+  background: boolean
+  /** server/tool activity is written to the log file; default off */
+  logging: boolean
+}
+
+export interface McpStatus {
+  running: boolean
+  enabled: boolean
+  port: number
+  background: boolean
+  logging: boolean
+  url: string | null
+  /** capability families the current build exposes (settings pane rows) */
+  capabilities: string[]
+}
+
+let deps: McpRuntimeDeps | null = null
+let service: McpServerService | null = null
+let logger: McpLogger | null = null
+let currentSettings: McpSettings = {
+  enabled: false,
+  port: DEFAULT_MCP_PORT,
+  background: false,
+  logging: false,
+}
+
+/** the configured runtime; agent sessions build their own server from the same controls (decision 0032) */
+export function currentMcpRuntimeDeps(): McpRuntimeDeps | null {
+  return deps
+}
+
+export function configureMcpRuntime(runtimeDeps: McpRuntimeDeps): void {
+  deps = runtimeDeps
+  logger = runtimeDeps.logFilePath ? new McpLogger(runtimeDeps.logFilePath) : null
+}
+
+/** drops a line into the log ring + file when logging is on; no-op otherwise */
+function mcpLogger(message: string): void {
+  if (!currentSettings.logging) return
+  logger?.append(message)
+}
+
+/** the configured log file path, when logging is available at all */
+export function mcpLogFilePath(): string | null {
+  return deps?.logFilePath ?? null
+}
+
+/** recent log lines for the settings pane */
+export function getMcpRecentLogs(): string[] {
+  return logger?.recent() ?? []
+}
+
+export function clearMcpLogs(): void {
+  logger?.clear()
+}
+
+/** reveal the log file in the file manager; creates it when missing */
+export function revealMcpLogFile(): void {
+  logger?.ensureFile()
+}
+
+async function loadMcpRuntime() {
+  const [
+    serverMod,
+    docMod,
+    pdfMod,
+    hwpMod,
+    slidesMod,
+    sheetsMod,
+    sessionMod,
+    openDocsMod,
+    diagramMod,
+    whiteboardMod,
+  ] = await Promise.all([
+    import('./mcp-server'),
+    import('./tools/document-tools'),
+    import('./tools/pdf-tools'),
+    import('./tools/hwp-tools'),
+    import('./tools/slides-tools'),
+    import('./tools/sheets-tools'),
+    import('./tools/session-tools'),
+    import('./tools/open-documents-tools'),
+    import('./tools/diagram-tools'),
+    import('./tools/whiteboard-tools'),
+  ])
+  return {
+    McpServerService: serverMod.McpServerService,
+    createDocumentTools: docMod.createDocumentTools,
+    documentDriver: docMod.documentDriver,
+    createPdfTools: pdfMod.createPdfTools,
+    createHwpTools: hwpMod.createHwpTools,
+    createSlidesTools: slidesMod.createSlidesTools,
+    slidesDriver: slidesMod.slidesDriver,
+    createSheetsTools: sheetsMod.createSheetsTools,
+    sheetsDriver: sheetsMod.sheetsDriver,
+    createSessionHost: sessionMod.createSessionHost,
+    createSessionTools: sessionMod.createSessionTools,
+    createOpenDocumentTools: openDocsMod.createOpenDocumentTools,
+    createDiagramTools: diagramMod.createDiagramTools,
+    createWhiteboardTools: whiteboardMod.createWhiteboardTools,
+  }
+}
+
+type LoadedMcpRuntime = Awaited<ReturnType<typeof loadMcpRuntime>>
+
+function buildTools(runtime: LoadedMcpRuntime): McpToolDefinition[] {
+  if (!deps) throw new Error('MCP runtime not configured')
+  // get_app_info advertises what the registered tool families can generate
+  const extraFormats = [
+    ...(deps.slidesControl ? ['pptx'] : []),
+    ...(deps.sheetsControl ? ['xlsx'] : []),
+  ]
+  // one session host per tool set: create_session / save_session drive whichever
+  // family is active, and each family's content tools address that same tab.
+  // buildTools runs once per client session (see the server's toolsFactory), so
+  // each connected client gets its own active session rather than sharing one.
+  const host = runtime.createSessionHost()
+  const drivers: FamilyDriver[] = [
+    ...(deps.docsControl ? [runtime.documentDriver(deps.docsControl)] : []),
+    ...(deps.slidesControl ? [runtime.slidesDriver(deps.slidesControl)] : []),
+    ...(deps.sheetsControl ? [runtime.sheetsDriver(deps.sheetsControl)] : []),
+  ]
+  const cli = deps.cliRunner
+  return [
+    // the session entry point first: an agent picking a tool sees create_session
+    ...runtime.createSessionTools(drivers, host),
+    ...runtime.createDocumentTools(
+      {
+        version: deps.version,
+        defaultSaveDir: deps.defaultSaveDir,
+        // headless create_docx is opt-in: off by default so the default surface is
+        // the visible document session
+        background: currentSettings.background,
+        // open_in_genoffice reports ok only when the file routed to a tab
+        openInTab: (filePath) => {
+          if (!deps) return
+          const opened = deps.openPath(filePath)
+          if (!opened) throw new Error(`could not open ${filePath} in ${PRODUCT_NAME}`)
+        },
+        docs: deps.docsControl,
+        extraFormats,
+        ...(cli ? { cli } : {}),
+        ...(deps.resolveTarget ? { resolveTarget: deps.resolveTarget } : {}),
+      },
+      host,
+    ),
+    ...runtime.createSlidesTools(
+      {
+        defaultSaveDir: deps.defaultSaveDir,
+        background: currentSettings.background,
+        slides: deps.slidesControl,
+        ...(cli ? { cli } : {}),
+        ...(deps.resolveTarget ? { resolveTarget: deps.resolveTarget } : {}),
+      },
+      host,
+    ),
+    ...runtime.createSheetsTools(
+      {
+        defaultSaveDir: deps.defaultSaveDir,
+        background: currentSettings.background,
+        sheets: deps.sheetsControl,
+        ...(cli ? { cli } : {}),
+        ...(deps.resolveTarget ? { resolveTarget: deps.resolveTarget } : {}),
+      },
+      host,
+    ),
+    // headless, session-free read access (read_pdf); registered whenever the
+    // pdf workspace is bundled in, which the shell always does
+    ...runtime.createPdfTools(),
+    // the same for Hangul documents (read_hwp)
+    ...runtime.createHwpTools(),
+    // documents the user has open, independent of the session above
+    ...runtime.createOpenDocumentTools({
+      defaultSaveDir: deps.defaultSaveDir,
+      ...(deps.openDocumentsControl ? { control: deps.openDocumentsControl } : {}),
+    }),
+    // open diagrams: read a page, apply ops as one undo step (no session family)
+    ...runtime.createDiagramTools({
+      ...(deps.diagramControl ? { control: deps.diagramControl } : {}),
+    }),
+    // open whiteboards: read a page, apply ops or template as one undo step
+    ...runtime.createWhiteboardTools({
+      ...(deps.whiteboardControl ? { control: deps.whiteboardControl } : {}),
+    }),
+  ]
+}
+
+async function ensureService(): Promise<McpServerService> {
+  if (!deps) throw new Error('MCP runtime not configured')
+  if (!service) {
+    const runtime = await loadMcpRuntime()
+    service = new runtime.McpServerService({
+      port: currentSettings.port,
+      // built per client session so concurrent clients do not share one
+      // active editing session; the factory re-reads settings at connect time
+      toolsFactory: () => buildTools(runtime),
+      logger: mcpLogger,
+      version: deps.version,
+    })
+  }
+  return service
+}
+
+/** Start the server if settings say it should be on. Safe to call at boot. */
+export async function startMcpFromSettings(settings: McpSettings): Promise<void> {
+  currentSettings = normalize(settings)
+  if (!currentSettings.enabled) return
+  await (await ensureService()).start(currentSettings.port)
+}
+
+/**
+ * Apply a settings change: persist semantics are the caller's job (index.ts
+ * writes app-settings.json); here we reconcile the running server with the new
+ * values — start, stop, or restart when the port or the exposed tool set changes.
+ */
+export async function applyMcpSettings(settings: McpSettings): Promise<McpStatus> {
+  const next = normalize(settings)
+  const wasRunning = service?.isRunning() ?? false
+  // both comparisons read the OLD settings: they must happen before currentSettings is overwritten
+  const portChanged = next.port !== currentSettings.port
+  const backgroundChanged = next.background !== currentSettings.background
+  currentSettings = next
+
+  if (!next.enabled) {
+    await service?.stop()
+    return mcpStatus()
+  }
+  // a background flip changes the exposed tool list, so live sessions must be
+  // dropped and rebuilt — same treatment as a port change
+  if (!wasRunning) {
+    await (await ensureService()).start(next.port)
+  } else if (portChanged || backgroundChanged) {
+    await service?.stop()
+    service = null
+    await (await ensureService()).start(next.port)
+  }
+  return mcpStatus()
+}
+
+export async function stopMcp(): Promise<void> {
+  await service?.stop()
+}
+
+export function stopMcpSync(): void {
+  service?.stopSync()
+}
+
+export function mcpStatus(): McpStatus {
+  const running = service?.isRunning() ?? false
+  return {
+    running,
+    enabled: currentSettings.enabled,
+    port: currentSettings.port,
+    background: currentSettings.background,
+    logging: currentSettings.logging,
+    url: running ? service!.getUrl() : null,
+    capabilities: [
+      'docs',
+      ...(deps?.slidesControl ? ['slides'] : []),
+      ...(deps?.sheetsControl ? ['sheets'] : []),
+      // read_pdf is headless and always registered, so the family is always
+      // visible (read-only until the pdf editor is driven)
+      'pdf',
+      // read_hwp likewise
+      'hwp',
+    ],
+  }
+}
+
+function normalize(settings: McpSettings): McpSettings {
+  const port =
+    Number.isInteger(settings.port) && settings.port > 0 && settings.port < 65536
+      ? settings.port
+      : DEFAULT_MCP_PORT
+  return {
+    enabled: settings.enabled === true,
+    port,
+    background: settings.background === true,
+    logging: settings.logging === true,
+  }
+}

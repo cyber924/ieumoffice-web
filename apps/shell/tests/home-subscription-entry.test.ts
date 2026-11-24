@@ -1,0 +1,432 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defaultAiSettings } from '@genoffice/ai-provider'
+import type {
+  AiSettings,
+  AiSubscriptionStatus,
+  SubscriptionStatusMap,
+} from '@genoffice/ai-provider/browser'
+import { LANGS } from '@genoffice/i18n'
+import { aiSubscriptionText } from '@genoffice/ui'
+import type { HomeApi } from '../src/shared/home-api'
+import type { SubscriptionApi } from '../src/shared/subscription-api'
+import { Home } from '../src/renderer/src/Home'
+import { LocaleProvider } from '../src/renderer/src/locale'
+import { strings } from '../src/renderer/src/strings'
+import type { SubscriptionConnection } from '../src/renderer/src/subscription-client'
+
+const actEnvironment = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean
+}
+actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+
+let host: HTMLDivElement
+let root: Root
+/** the listener Home gave `onOpenSettings`: the main process asking for Settings */
+let askForSettings: ((target: { section: string }) => void) | undefined
+
+/** every home call answers with something harmless; the calls this file cares about are named */
+function installHome(): void {
+  const known: Record<string, unknown> = {
+    recents: async () => ({ entries: [], total: 0, totalAll: 0 }),
+    starred: async () => ({ entries: [], total: 0, totalAll: 0 }),
+    starredGroups: async () => [],
+    folderRoots: async () => [],
+    kbList: async () => [],
+    getAiSettings: async () => defaultAiSettings(),
+    aiGetSettings: async () => defaultAiSettings(),
+    getAiProviders: () => [],
+    getAiMediaProviders: () => [],
+    getAiSearchProviders: () => [],
+    getTheme: async () => 'system',
+    getDocumentTheme: async () => 'follow',
+    getDefaultSaveDir: async () => '',
+    getAutoSaveDefault: async () => ({ on: false, updatedAt: 0 }),
+    getDefaultAppStatus: async () => ({ state: 'unsupported', others: [], manualOnly: false }),
+    getAiPanelPrefs: async () => ({ fontSize: 'default', customFontSize: 14, spellcheck: true }),
+    getUpdateChannel: async () => 'stable',
+    getAppVersion: async () => '1.0.0',
+    getCodexModels: async () => ({ models: [], defaultModel: '' }),
+    onOpenSettings: (handler: (target: { section: string }) => void) => {
+      askForSettings = handler
+      return () => undefined
+    },
+  }
+  window.aiOffice = new Proxy(known, {
+    get: (target, name: string) =>
+      target[name] ?? (name.startsWith('on') ? () => () => undefined : async () => null),
+  }) as unknown as HomeApi
+}
+
+function installSubscription(map: SubscriptionStatusMap): void {
+  window.aiOfficeSubscription = {
+    statuses: async () => map,
+    recheck: async () => map,
+    login: async () => ({ ok: true }),
+    install: async () => ({ ok: true }),
+    setMeteredAccepted: async () => ({ ok: true, statuses: map }),
+    codexImageAvailable: async () => false,
+    onChanged: () => () => undefined,
+    openInstallHelp: async () => undefined,
+  } as SubscriptionApi
+}
+
+beforeEach(() => {
+  // jsdom has no element scrolling; the ask panel keeps its log scrolled to the end
+  Element.prototype.scrollTo = () => undefined
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  installHome()
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  host.remove()
+  delete window.aiOfficeSubscription
+})
+
+function statuses(
+  claude: Partial<AiSubscriptionStatus> & Pick<AiSubscriptionStatus, 'state'>,
+  codex: Partial<AiSubscriptionStatus> & Pick<AiSubscriptionStatus, 'state'>,
+): SubscriptionStatusMap {
+  return {
+    'claude-code': { provider: 'claude-code', meteredAccepted: false, ...claude },
+    codex: { provider: 'codex', meteredAccepted: false, ...codex },
+  }
+}
+
+interface RenderOptions {
+  welcomeOpen?: boolean
+  onSettingsOpenChange?: (open: boolean) => void
+  noticeDue?: boolean
+  onNoticeAcknowledge?: () => void
+  aiSettings?: AiSettings | null
+  refresh?: () => void
+}
+
+async function renderHome(map: SubscriptionStatusMap, options: RenderOptions = {}): Promise<void> {
+  installSubscription(map)
+  const connection: SubscriptionConnection = {
+    statuses: map,
+    busy: false,
+    failed: {},
+    codexImageAvailable: false,
+    install: vi.fn(),
+    login: vi.fn(),
+    switchAccount: vi.fn(),
+    logout: vi.fn(),
+    recheck: vi.fn(),
+    refresh: options.refresh ?? vi.fn(),
+    acceptMetered: vi.fn(async () => undefined),
+    openInstallHelp: vi.fn(),
+  }
+  await act(async () => {
+    root.render(
+      createElement(
+        LocaleProvider,
+        { initial: 'en' },
+        createElement(Home, {
+          connection,
+          aiSettings: options.aiSettings === undefined ? defaultAiSettings() : options.aiSettings,
+          noticeDue: options.noticeDue ?? false,
+          onNoticeAcknowledge: options.onNoticeAcknowledge ?? vi.fn(),
+          ...(options.welcomeOpen === undefined ? {} : { welcomeOpen: options.welcomeOpen }),
+          ...(options.onSettingsOpenChange
+            ? { onSettingsOpenChange: options.onSettingsOpenChange }
+            : {}),
+        }),
+      ),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
+async function waitForSelector(selector: string, timeoutMs = 4000): Promise<Element> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const found = host.querySelector(selector)
+    if (found) return found
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    })
+  }
+  throw new Error(`Timed out waiting for selector: ${selector}`)
+}
+
+async function click(element: Element | null | undefined): Promise<void> {
+  expect(element).toBeTruthy()
+  await act(async () => {
+    ;(element as HTMLElement).click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
+const entry = (): HTMLButtonElement => host.querySelector<HTMLButtonElement>('.account-btn')!
+const entryText = (selector: string): string | null =>
+  entry().querySelector(selector)?.textContent ?? null
+
+describe('home settings entry', () => {
+  const name = () => entryText('.account-name')
+  const sub = () => entryText('.account-sub')
+  const tip = () => entry().dataset.tip
+
+  it('reads Settings, with the connected subscription state below and its name in the tooltip', async () => {
+    await renderHome(statuses({ state: 'ready', planName: 'max' }, { state: 'signed-out' }))
+    expect(entry().dataset.subscription).toBe('connected')
+    expect(name()).toBe('Settings')
+    expect(sub()).toBe('AI: Connected · max')
+    expect(tip()).toBe('Claude · Connected · max')
+    expect(entry().textContent).not.toContain('Claude')
+    // the button's name stays Settings; the state line describes it
+    expect(entry().getAttribute('aria-label')).toBe('Settings')
+    const described = entry().getAttribute('aria-describedby')
+    expect(described && document.getElementById(described)?.textContent).toBe('AI: Connected · max')
+  })
+
+  it('names both in the tooltip when both are connected', async () => {
+    await renderHome(statuses({ state: 'ready' }, { state: 'ready' }))
+    expect(name()).toBe('Settings')
+    expect(sub()).toBe(`AI: ${aiSubscriptionText('en', 'cardReady')}`)
+    expect(tip()).toBe(`Claude · Codex · ${aiSubscriptionText('en', 'cardReady')}`)
+  })
+
+  it('keeps the cost in sight for an accepted metered login that is selected', async () => {
+    const map = statuses({ state: 'signed-out' }, { state: 'metered', meteredAccepted: true })
+    await renderHome(map, {
+      aiSettings: { ...defaultAiSettings(), provider: 'codex', meteredAccepted: { codex: true } },
+    })
+    expect(sub()).toBe(`AI: ${aiSubscriptionText('en', 'cardMeteredAccepted')}`)
+    expect(tip()).toContain('Codex')
+
+    // under auto the metered login does not run, so it is not shown as in use
+    await renderHome(map, {
+      aiSettings: { ...defaultAiSettings(), meteredAccepted: { codex: true } },
+    })
+    expect(entry().dataset.subscription).toBe('disconnected')
+    expect(sub()).toBe('AI: Not connected')
+  })
+
+  it('shows the selected key provider in use over the subscriptions', async () => {
+    await renderHome(statuses({ state: 'ready', planName: 'max' }, { state: 'ready' }), {
+      aiSettings: {
+        ...defaultAiSettings(),
+        provider: 'gemini',
+        providers: { gemini: { apiKey: 'key', model: 'gemini-3.5-flash-lite' } },
+      },
+    })
+    expect(entry().dataset.subscription).toBe('connected')
+    expect(name()).toBe('Settings')
+    expect(sub()).toBe('AI: Connected · in use')
+    expect(tip()).toBe('Gemini · Connected · in use')
+  })
+
+  it('shows the selected key provider as needing a connection when its key is missing', async () => {
+    await renderHome(statuses({ state: 'ready', planName: 'max' }, { state: 'ready' }), {
+      aiSettings: { ...defaultAiSettings(), provider: 'gemini' },
+    })
+    expect(entry().dataset.subscription).toBe('needs-connection')
+    expect(sub()).toBe('AI: Needs connecting')
+    expect(tip()).toBe('Gemini · Needs connecting')
+    expect(entry().querySelector('.account-avatar')?.classList.contains('logged-in')).toBe(false)
+  })
+
+  it('says a selected CLI turned off in this app is off, and opens Settings on the AI section', async () => {
+    await renderHome(statuses({ state: 'off' }, { state: 'ready' }), {
+      aiSettings: {
+        ...defaultAiSettings(),
+        provider: 'claude-code',
+        subscriptionOff: { 'claude-code': true },
+      },
+    })
+    expect(entry().dataset.subscription).toBe('off')
+    expect(sub()).toBe('AI: Off in this app')
+    expect(tip()).toBe('Claude · Off in this app')
+    expect(entry().querySelector('.account-avatar')?.classList.contains('logged-in')).toBe(false)
+    await click(entry())
+    await waitForSelector('.set-nav-item.active')
+    expect(host.querySelector('.set-nav-item.active')?.textContent).toContain('AI')
+  })
+
+  it('reads the statuses alone while the settings are not read', async () => {
+    await renderHome(statuses({ state: 'ready' }, { state: 'ready' }), { aiSettings: null })
+    expect(tip()).toContain('Claude · Codex')
+  })
+
+  it('says nothing is connected, and waits while still checking', async () => {
+    await renderHome(statuses({ state: 'not-installed' }, { state: 'signed-out' }))
+    expect(entry().dataset.subscription).toBe('disconnected')
+    expect(name()).toBe('Settings')
+    expect(sub()).toBe('AI: Not connected')
+    expect(tip()).toBe(aiSubscriptionText('en', 'connectTitle'))
+
+    await renderHome(statuses({ state: 'checking' }, { state: 'checking' }))
+    expect(entry().dataset.subscription).toBe('checking')
+    expect(sub()).toBe(`AI: ${aiSubscriptionText('en', 'cardChecking')}`)
+  })
+
+  it('opens Settings on the AI section and re-reads the connection when it closes', async () => {
+    const refresh = vi.fn()
+    await renderHome(statuses({ state: 'signed-out' }, { state: 'signed-out' }), { refresh })
+    await click(entry())
+    const active = await waitForSelector('.set-nav-item.active')
+    expect(active.textContent).toContain('AI')
+    expect(host.querySelectorAll('.set-sub-cards .ai-sub-card')).toHaveLength(3)
+
+    await click(host.querySelector('.set-close'))
+    expect(host.querySelector('.set-sub-cards')).toBeNull()
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the words on the home entry', () => {
+  it('has Settings in every language', () => {
+    for (const lang of LANGS) {
+      // read from the dictionary itself: the lookup falls back to English for a missing word
+      const word = strings[lang].settings
+      expect(word.trim(), lang).not.toBe('')
+      if (lang !== 'en') expect(word, lang).not.toBe('Settings')
+    }
+  })
+
+  it('has the AI state line in every language, with a place for the state', () => {
+    for (const lang of LANGS) {
+      expect(strings[lang].homeEntryAiState, lang).toContain('{state}')
+    }
+  })
+})
+
+describe('a request for Settings while the welcome window is up', () => {
+  const none = statuses({ state: 'signed-out' }, { state: 'signed-out' })
+  const dialog = () => host.querySelector('.set-dialog')
+  const overlay = () => host.querySelector('.set-overlay')
+
+  it('opens at once where it was asked, marked to stack above that window', async () => {
+    const onSettingsOpenChange = vi.fn()
+    await renderHome(none, { welcomeOpen: true, onSettingsOpenChange })
+    // a skill file dropped on the window: the main process asks for Settings → Skills
+    await act(async () => askForSettings!({ section: 'skills' }))
+    await waitForSelector('.set-dialog')
+    expect(dialog()).not.toBeNull()
+    expect(host.querySelector('.set-nav-item.active')?.textContent).toContain('Skills')
+    expect(overlay()!.classList.contains('over-welcome')).toBe(true)
+    // the welcome window is told, so it leaves the keyboard alone meanwhile
+    expect(onSettingsOpenChange).toHaveBeenLastCalledWith(true)
+  })
+
+  it('is not marked when no welcome window is up', async () => {
+    await renderHome(none)
+    await act(async () => askForSettings!({ section: 'skills' }))
+    await waitForSelector('.set-dialog')
+    expect(dialog()).not.toBeNull()
+    expect(overlay()!.classList.contains('over-welcome')).toBe(false)
+  })
+})
+
+describe('home screen without the removed areas', () => {
+  it('has no cloud projects entry, sign-in or credits', async () => {
+    await renderHome(statuses({ state: 'ready' }, { state: 'ready' }))
+    expect(host.querySelectorAll('.sidebar-nav .nav-item')).toHaveLength(3)
+    expect(host.querySelector('.login-hint, .cloud-projects, .nav-external')).toBeNull()
+    expect(host.textContent).not.toMatch(/credits|sign in/i)
+  })
+})
+
+describe('first-connection notice on the home screen', () => {
+  const ready = statuses({ state: 'ready' }, { state: 'signed-out' })
+
+  it('does not interrupt the plain home screen', async () => {
+    await renderHome(ready, { noticeDue: true })
+    expect(host.querySelector('.first-notice')).toBeNull()
+  })
+
+  it('comes up in the settings flow and reports its acknowledgement', async () => {
+    const onNoticeAcknowledge = vi.fn()
+    await renderHome(ready, { noticeDue: true, onNoticeAcknowledge })
+    await click(entry())
+    const notice = host.querySelector('.first-notice')!
+    expect(notice.textContent).toContain(aiSubscriptionText('en', 'noticeSend'))
+    await click(notice.querySelector('.ai-sub-btn'))
+    expect(onNoticeAcknowledge).toHaveBeenCalledTimes(1)
+  })
+
+  it('is still owed after Settings closed, when the connection is only seen then', async () => {
+    const map = statuses({ state: 'signed-out' }, { state: 'signed-out' })
+    await renderHome(map, { noticeDue: false })
+    await click(entry())
+    await click(await waitForSelector('.set-close'))
+    expect(host.querySelector('.first-notice')).toBeNull()
+    // the connection made in the dialog arrives with the refresh
+    await renderHome(ready, { noticeDue: true })
+    expect(host.querySelector('.first-notice')).not.toBeNull()
+  })
+
+  it('comes up when the ask panel is opened', async () => {
+    await renderHome(ready, { noticeDue: true })
+    const ask = Array.from(host.querySelectorAll<HTMLElement>('.sidebar-nav .nav-item')).find(
+      (item) => item.textContent?.includes('Ask'),
+    )
+    await click(ask)
+    expect(host.querySelector('.first-notice')).not.toBeNull()
+  })
+})
+
+describe('ask panel without a connection', () => {
+  const openAsk = async (): Promise<void> => {
+    const items = host.querySelectorAll<HTMLElement>('.sidebar-nav .nav-item')
+    await click(items[2])
+    await waitForSelector('.kb-ask')
+  }
+
+  it('says what to connect and leads to Settings → AI', async () => {
+    await renderHome(statuses({ state: 'not-installed' }, { state: 'signed-out' }))
+    await openAsk()
+    const hint = host.querySelector('.kb-ask-login')!
+    expect(hint.textContent).toContain(aiSubscriptionText('en', 'connectTitle'))
+    await click(hint.querySelector('.kb-ask-login-link'))
+    await waitForSelector('.set-nav-item.active')
+    expect(host.querySelector('.set-nav-item.active')?.textContent).toContain('AI')
+  })
+
+  it('offers the connect cards, on the live connection, when a question is sent anyway', async () => {
+    await renderHome(statuses({ state: 'not-installed' }, { state: 'signed-out' }))
+    await openAsk()
+    const box = host.querySelector<HTMLTextAreaElement>('.kb-ask textarea')!
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setValue.call(box, 'What changed?')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(host.querySelector('.kb-ask .ai-send-btn'))
+
+    // the guide knows each subscription's live state before one is picked
+    const badges = Array.from(
+      host.querySelectorAll<HTMLElement>('.kb-ask .ai-sub-prompt .ai-sub-guide-path'),
+    ).map((el) => [el.dataset.path, el.querySelector('.ai-sub-guide-badge')?.textContent ?? null])
+    expect(badges).toEqual([
+      ['claude-code', null],
+      ['chatgpt', null],
+      ['free', null],
+    ])
+    // the Codex program is a way within the one ChatGPT answer
+    await click(host.querySelector('.kb-ask .ai-sub-prompt [data-path="chatgpt"]'))
+    await click(host.querySelector('.kb-ask .ai-sub-prompt [data-action="guide-alternate"]'))
+    const cards = Array.from(
+      host.querySelectorAll<HTMLElement>('.kb-ask .ai-sub-prompt .ai-sub-card'),
+    )
+    expect(cards.map((card) => card.dataset.state)).toEqual(['signed-out'])
+    expect(box.value).toBe('What changed?')
+    expect(host.querySelectorAll('.kb-ask-msg')).toHaveLength(0)
+  })
+
+  it('says nothing once a subscription can run', async () => {
+    await renderHome(statuses({ state: 'ready' }, { state: 'signed-out' }))
+    await openAsk()
+    expect(host.querySelector('.kb-ask-login')).toBeNull()
+  })
+})

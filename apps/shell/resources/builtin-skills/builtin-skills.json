@@ -1,0 +1,155 @@
+[
+  {
+    "name": "meeting-minutes",
+    "source": "github/awesome-copilot",
+    "path": "skills/meeting-minutes",
+    "commit": "613efc8c21d9b3ce642dff361d17006cd9967e28",
+    "license": "MIT",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "internal-comms",
+    "source": "anthropics/skills",
+    "path": "skills/internal-comms",
+    "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "humanizer",
+    "source": "blader/humanizer",
+    "path": "",
+    "commit": "8c307f367c91bd974002f10f2be2965d642c13df",
+    "license": "MIT",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "copy-editing",
+    "source": "coreyhaines31/marketingskills",
+    "path": "skills/copy-editing",
+    "commit": "e85f3cbc2e4a79bf33b2a12e9bdd9087d414735b",
+    "license": "MIT",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "find-skills",
+    "source": "vercel-labs/skills",
+    "path": "skills/find-skills",
+    "commit": "a80e4c9d12d607631249d4d7d059f835d4b2f13a",
+    "license": "MIT",
+    "agentOnly": true,
+    "modified": true
+  },
+  {
+    "name": "administration-report",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "administration-report-draft",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "docx",
+    "source": "anthropics/skills",
+    "path": "skills/docx",
+    "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+    "license": "Apache-2.0",
+    "agentOnly": true,
+    "modified": false
+  },
+  {
+    "name": "pptx",
+    "source": "anthropics/skills",
+    "path": "skills/pptx",
+    "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+    "license": "Apache-2.0",
+    "agentOnly": true,
+    "modified": false
+  },
+  {
+    "name": "xlsx",
+    "source": "anthropics/skills",
+    "path": "skills/xlsx",
+    "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+    "license": "Apache-2.0",
+    "agentOnly": true,
+    "modified": false
+  },
+  {
+    "name": "pdf",
+    "source": "anthropics/skills",
+    "path": "skills/pdf",
+    "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+    "license": "Apache-2.0",
+    "agentOnly": true,
+    "modified": false
+  },
+  {
+    "name": "hwp-document",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "hwp-exam-paper",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "mindmap",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "diagram",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "whiteboard",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  },
+  {
+    "name": "html-document",
+    "source": "ieumoffice",
+    "path": "",
+    "commit": "",
+    "license": "Apache-2.0",
+    "agentOnly": false,
+    "modified": false
+  }
+]
