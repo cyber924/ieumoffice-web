@@ -28,12 +28,17 @@ function setText(node, value, isHwp) {
   const ns=isHwp?(node.namespaceURI||'http://www.hancom.co.kr/hwpml/2011/paragraph'):'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
   const para=node.localName==='p'?node:first(node,'p')
   if(!para) throw new Error('텍스트를 추가할 문단을 찾을 수 없습니다.')
-  const run=doc.createElementNS(ns,prefix+':run')
+  const existing=direct(para,'run')[0]
+  const run=existing || doc.createElementNS(ns,prefix+':run')
   const t=doc.createElementNS(ns,prefix+':t')
   t.textContent=text
   if(!isHwp)t.setAttribute('xml:space','preserve')
   run.appendChild(t)
-  para.appendChild(run)
+  if(!existing){
+    const layout=direct(para,'linesegarray')[0]
+    if(layout)para.insertBefore(run,layout)
+    else para.appendChild(run)
+  }
 }
 function sizeGuard(bytes,zip) {
   if(bytes.byteLength>MAX_FILE)throw new Error('15MB 이하의 문서만 지원합니다.')
@@ -47,46 +52,192 @@ function makeBinding(state,node) {
 function htmlPara(state,node) {
   const id=makeBinding(state,node)
   const t=textOf(node)
-  return '<p class="doc-paragraph" data-bind="'+id+'">'+(t?enc(t):'<br>')+'</p>'
+  return '<p class="doc-paragraph" data-bind="'+id+'"'+hwpParagraphStyle(state,node)+'>'+(t?enc(t):'<br>')+'</p>'
 }
-function htmlTable(state,node,type) {
-  const rows=descendants(node,'tr')
-  let html='<table data-kind="'+type+'"><tbody>'
+
+function attrOf(n,key,defaultValue='') {
+  if(!n)return defaultValue
+  return n.getAttribute(key) ?? n.getAttribute('w:'+key) ?? n.getAttribute('hp:'+key) ?? defaultValue
+}
+const localLower=n=>String(n?.localName||'').toLowerCase()
+function hwpUnitToPx(x) {
+  const v=Number(x)
+  return Number.isFinite(v)&&v>0?Math.max(14,Math.min(1200,Math.round(v/75))):null
+}
+function tableText(node){
+  return descendants(node,'t').filter(t=>{
+    let parent=t.parentElement
+    while(parent&&parent!==node) {
+      if(parent.localName==='tbl')return false
+      parent=parent.parentElement
+    }
+    return true
+  }).map(t=>t.textContent||'').join('')
+}
+function tableCellLayout(cell,type) {
+  if(type==='hwpx') {
+    const span=first(cell,'cellSpan')||first(cell,'tcPr')||cell
+    const addr=first(cell,'cellAddr')||first(cell,'tcPr')||cell
+    const size=first(cell,'cellSz')||first(cell,'tcPr')
+    return {
+      colSpan:Math.max(1,Math.min(30,Number(attrOf(span,'colSpan','1'))||1)),
+      rowSpan:Math.max(1,Math.min(60,Number(attrOf(span,'rowSpan','1'))||1)),
+      colAddr:Math.max(0,Number(attrOf(addr,'colAddr','-1'))),
+      width:hwpUnitToPx(attrOf(size,'width'))
+    }
+  }
+  const grid=first(cell,'gridSpan')
+  return {colSpan:Math.max(1,Math.min(30,Number(attrOf(grid,'val','1'))||1)),rowSpan:1,colAddr:-1,width:null}
+}
+
+function hwpHeaderStyles(doc){
+  const para=new Map(),chars=new Map(),fonts=new Map()
+  for(const n of descendants(doc,'paraPr')){
+    const p=first(n,'align'),alignment=attrOf(p,'horizontal','LEFT')
+    para.set(attrOf(n,'id'),alignment==='CENTER'?'center':alignment==='RIGHT'?'right':alignment==='JUSTIFY'?'justify':'left')
+  }
+  for(const group of descendants(doc,'fontface')){
+    if(attrOf(group,'lang')!=='HANGUL')continue
+    for(const font of direct(group,'font'))fonts.set(attrOf(font,'id'),attrOf(font,'face'))
+  }
+  for(const n of descendants(doc,'charPr')){
+    const fontRef=first(n,'fontRef')
+    const font=fonts.get(attrOf(fontRef,'hangul'))
+    const height=Number(attrOf(n,'height'))
+    chars.set(attrOf(n,'id'),{
+      font:font&&/^[\p{L}\p{N} ._-]{1,40}$/u.test(font)?font:'',
+      size:Number.isFinite(height)&&height>=600&&height<=3000?height/100:0
+    })
+  }
+  return {para,chars}
+}
+function hwpParagraphStyle(state,node){
+  if(state.type!=='hwpx'||!state.hwpStyles)return ''
+  const align=state.hwpStyles.para.get(attrOf(node,'paraPrIDRef'))||'left'
+  const run=direct(node,'run')[0]
+  const char=state.hwpStyles.chars.get(attrOf(run,'charPrIDRef'))
+  const css=['text-align:'+align]
+  if(char?.font)css.push('font-family:'+char.font.replace(/[;{}<>]/g,''))
+  if(char?.size)css.push('font-size:'+char.size+'pt')
+  return ' style="'+css.join(';')+'"'
+}
+function hwpTableColumns(node,rows) {
+  const count=Math.max(1,Math.min(64,Number(attrOf(node,'colCnt'))||1))
+  const units=Array(count).fill(0)
+  const multi=[]
+  for(const row of rows){
+    for(const cell of direct(row,'tc')){
+      const l=tableCellLayout(cell,'hwpx')
+      const width=Number(attrOf(first(cell,'cellSz'),'width'))||0
+      if(!Number.isFinite(l.colAddr)||l.colAddr<0||l.colAddr+l.colSpan>count)continue
+      if(l.colSpan===1 && width>0)units[l.colAddr]=Math.max(units[l.colAddr],width)
+      else if(width>0)multi.push({start:l.colAddr,span:l.colSpan,width})
+    }
+  }
+  // Multi-column cells fill any unknown column widths after single-column sizes.
+  for(const item of multi){
+    const unknown=[]
+    let known=0
+    for(let i=item.start;i<item.start+item.span;i++) {
+      if(units[i]>0)known+=units[i];else unknown.push(i)
+    }
+    const gap=Math.max(1,(item.width-known)/Math.max(1,unknown.length))
+    for(const i of unknown)units[i]=gap
+  }
+  let sum=units.reduce((a,b)=>a+b,0)
+  if(!sum)units.fill(1),sum=count
+  const unknown=units.filter(x=>x===0).length
+  if(unknown) {
+    const filler=sum/Math.max(1,count-unknown)
+    for(let i=0;i<count;i++)if(!units[i])units[i]=filler
+    sum=units.reduce((a,b)=>a+b,0)
+  }
+  return units.map(x=>Math.round(x/sum*100000)/1000)
+}
+
+function htmlTable(state,node,type,depth=0) {
+  if(depth>3)return '<p class="import-warning">중첩 표 미리보기 제한 · 원본 파일에는 유지됩니다.</p>'
+  const rows=direct(node,'tr')
+  const tableWidth=type==='hwpx'?hwpUnitToPx(attrOf(first(node,'sz'),'width')):null
+  const cols=type==='hwpx'?hwpTableColumns(node,rows):null
+  const attributes=' data-kind="'+type+'" data-hwp-cols="'+(cols?.length||0)+'"'+
+    (cols?.length>12?' data-dense="true"':'')+
+    (tableWidth?' style="width:min(100%,'+tableWidth+'px);table-layout:fixed"':'')
+  let html='<table'+attributes+'>'
+  if(cols)html+='<colgroup>'+cols.map(w=>'<col style="width:'+w+'%">').join('')+'</colgroup>'
+  html+='<tbody>'
   for(const row of rows) {
     const rowId=makeBinding(state,row)
     html+='<tr data-row-bind="'+rowId+'">'
-    for(const cell of direct(row,'tc')) {
+    let cells=direct(row,'tc')
+    if(type==='hwpx')cells=cells.slice().sort((a,b)=>{
+      const x=tableCellLayout(a,type).colAddr,y=tableCellLayout(b,type).colAddr
+      return (Number.isFinite(x)?x:9999)-(Number.isFinite(y)?y:9999)
+    })
+    for(const cell of cells){
       const id=makeBinding(state,cell)
-      const grid=first(cell,'gridSpan')
-      const span=grid?.getAttribute('w:val')||grid?.getAttribute('val')||'1'
-      const hwpSpan=first(cell,'cellSpan')
-      const spanHwp=hwpSpan?.getAttribute('colSpan')||'1'
-      const n=Math.max(1,Math.min(20,Number(type==='docx'?span:spanHwp)||1))
-      html+='<td data-bind="'+id+'"'+(n>1?' colspan="'+n+'"':'')+'>'+(textOf(cell)?enc(textOf(cell)):'<br>')+'</td>'
+      const dims=tableCellLayout(cell,type)
+      let attrs=' data-bind="'+id+'"'
+      if(dims.colSpan>1)attrs+=' colspan="'+dims.colSpan+'"'
+      if(dims.rowSpan>1)attrs+=' rowspan="'+dims.rowSpan+'"'
+      if(type==='docx'&&dims.width)attrs+=' style="width:'+dims.width+'px"'
+      const value=tableText(cell)
+      const nested=direct(first(cell,'subList')||cell,'tbl')
+      const nestedHtml=nested.length?nested.map(n=>htmlTable(state,n,type,depth+1)).join(''):''
+      html+='<td'+attrs+'>'+(value?enc(value):'<br>')+nestedHtml+'</td>'
     }
     html+='</tr>'
   }
   return html+'</tbody></table>'
 }
-function buildDocxHtml(state,doc) {
+function buildDocxHtml(state,doc){
   const body=first(doc,'body')
   if(!body)throw new Error('DOCX 본문을 찾을 수 없습니다.')
-  const blocks=Array.from(body.children)
-  return blocks.map(node => {
+  return Array.from(body.children).map(node=>{
     if(node.localName==='p')return htmlPara(state,node)
     if(node.localName==='tbl')return htmlTable(state,node,'docx')
     return ''
   }).join('')||'<p><br></p>'
 }
-function buildHwpxHtml(state,doc) {
-  const section=first(doc,'sec') || doc.documentElement
-  let blocks=direct(section,'p')
-  if(!blocks.length) blocks=Array.from(section.children).filter(x=>x.localName==='p'||x.localName==='tbl')
-  return blocks.map(node=>{
-    if(node.localName==='tbl')return htmlTable(state,node,'hwpx')
-    const tbl=first(node,'tbl')
-    return tbl?htmlTable(state,tbl,'hwpx'):htmlPara(state,node)
-  }).join('') || '<p><br></p>'
+function buildHwpxParagraph(state,node) {
+  // HWPX tables are normally nested in hp:p/hp:run, unlike DOCX tables.
+  // Rendering a p's full text AND its table duplicates cell contents.
+  const runs=direct(node,'run')
+  if(!runs.length)return htmlPara(state,node)
+  let result='',buffer='',hasObjects=false
+  const flush=()=>{
+    if(!buffer)return
+    // Only bind a plain paragraph; a mixed paragraph must not overwrite tables.
+    const bind=hasObjects?' contenteditable="false" data-mixed="true"':' data-bind="'+makeBinding(state,node)+'"'
+    result+='<p class="doc-paragraph"'+bind+hwpParagraphStyle(state,node)+'>'+enc(buffer)+'</p>'
+    buffer=''
+  }
+  for(const run of runs){
+    for(const part of Array.from(run.children)){
+      if(part.localName==='t'){buffer+=part.textContent||'';continue}
+      if(part.localName==='tab'){buffer+='\t';continue}
+      if(part.localName==='lineBreak'){buffer+='\n';continue}
+      if(part.localName==='tbl'){
+        hasObjects=true
+        flush()
+        result+=htmlTable(state,part,'hwpx')
+        continue
+      }
+      if(['pic','rect','ellipse','polygon','shape','line'].includes(part.localName)){
+        hasObjects=true
+        flush()
+        result+='<p class="import-warning" contenteditable="false">['+part.localName+' · 원본 개체는 파일에 보존됩니다]</p>'
+      }
+    }
+  }
+  if(!hasObjects && !result)return htmlPara(state,node)
+  flush()
+  return result
+}
+function buildHwpxHtml(state,doc){
+  const section=first(doc,'sec')||doc.documentElement
+  const blocks=Array.from(section.children).filter(x=>['p','tbl'].includes(x.localName))
+  return blocks.map(node=>node.localName==='tbl'?htmlTable(state,node,'hwpx'):buildHwpxParagraph(state,node)).join('')||'<p><br></p>'
 }
 export async function openPackage(file) {
   const ext=extension(file.name)
@@ -96,7 +247,11 @@ export async function openPackage(file) {
   if(bytes.byteLength>MAX_FILE)throw new Error('15MB 이하의 문서만 지원합니다.')
   const zip=await JSZip.loadAsync(bytes)
   sizeGuard(bytes,zip)
-  const state={type:ext,filename:file.name,zip,documents:[],bindings:new Map(),seq:0,originalBytes:bytes}
+  const state={type:ext,filename:file.name,zip,documents:[],bindings:new Map(),seq:0,originalBytes:bytes,tableStats:null,hwpStyles:null}
+  if(ext==='hwpx' && zip.file('Contents/header.xml')){
+    try{state.hwpStyles=hwpHeaderStyles(xmlRead(await zip.file('Contents/header.xml').async('string')))}
+    catch{state.hwpStyles=null}
+  }
   if(ext==='docx'){
     const entry=zip.file('word/document.xml')
     if(!entry)throw new Error('DOCX 문서 본문이 없습니다.')
@@ -117,6 +272,13 @@ export async function openPackage(file) {
       all+=buildHwpxHtml(state,doc)
     }
     state.html=all
+    const tables=state.documents.flatMap(entry=>descendants(entry.doc,'tbl'))
+    state.tableStats={
+      tables:tables.length,
+      rows:tables.reduce((sum,t)=>sum+direct(t,'tr').length,0),
+      cells:tables.reduce((sum,t)=>sum+direct(t,'tr').reduce((n,row)=>n+direct(row,'tc').length,0),0),
+      maxColumns:Math.max(0,...tables.map(t=>Number(attrOf(t,'colCnt'))||0))
+    }
   }
   return state
 }
@@ -153,21 +315,24 @@ function bindNewRows(state,paper){
 export async function savePackage(state,paper) {
   if(!state)return createDocx(paper)
   bindNewRows(state,paper)
+  let changed=false
   for(const el of paper.querySelectorAll('[data-bind]')){
     const item=state.bindings.get(el.dataset.bind)
-    if(!item || el.tagName==='TR')continue
+    if(!item || el.tagName==='TR' || el.dataset.mixed==='true')continue
     const text=el.innerText.replace(/\n$/,'')
     if(text!==item.text){
       setText(item.node,text,state.type==='hwpx')
       item.text=text
+      changed=true
     }
   }
   const serializer=new XMLSerializer()
-  for(const entry of state.documents)state.zip.file(entry.path,serializer.serializeToString(entry.doc))
+  // Updating only changed sections keeps original HWPX header, styles and unrelated parts intact.
+  if(changed)for(const entry of state.documents)state.zip.file(entry.path,serializer.serializeToString(entry.doc))
   return new Blob([await state.zip.generateAsync({type:'uint8array',compression:'DEFLATE'})],{type:state.type==='docx'?'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'application/zip'})
 }
 export function importedModeLimitations(state) {
-  return state?.type==='hwpx'?'HWPX 제한 편집: 텍스트·표 셀 수정과 파일 저장을 지원합니다. 복잡한 표 병합·그림·누름틀은 반드시 사본으로 검증하세요.':'DOCX 제한 편집: 기존 단락과 표 셀의 텍스트를 수정할 수 있습니다. 글꼴·주석·각주·복잡한 서식은 원본에서 확인하세요.'
+  return state?.type==='hwpx'?'HWPX 제한 편집: 병합 셀·문단 순서 미리보기 개선. 표 셀 텍스트만 수정 가능하며 기존 표 구조는 보호합니다. 누름틀·그림·배치는 원본 파일로 재확인하세요.':'DOCX 제한 편집: 기존 단락과 표 셀의 텍스트를 수정할 수 있습니다. 글꼴·주석·각주·복잡한 서식은 원본에서 확인하세요.'
 }
 export function insertTableMarkup(rows=3,cols=3){
   let s='<table><tbody>'
@@ -175,6 +340,7 @@ export function insertTableMarkup(rows=3,cols=3){
   return s+'</tbody></table><p><br></p>'
 }
 export function addTableRow(state,element){
+  if(state)return false // Imported HWPX requires cellAddr/rowAddr regeneration; preserve the original structure.
   const row=element.closest('tr')
   if(!row)return false
   const clone=row.cloneNode(true)

@@ -1,0 +1,36 @@
+name: MiloSoft work branch syntax and document tests
+on:
+  push:
+    branches:
+      - work/table-alignment-ai-fix
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+      - name: Syntax check
+        working-directory: web
+        run: |
+          node --check src/formats.js
+          node --check src/docx-export.js
+          node --check src/media-tools.js
+          node --check src/editor-pro.js
+          node --check src/main.js
+          node --check src/table-ai.js
+      - name: Document format regression tests
+        working-directory: web
+        run: node --test tests/feature-regression.test.mjs
+      - name: Build web app
+        working-directory: web
+        run: npm run build
