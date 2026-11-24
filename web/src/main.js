@@ -8,8 +8,12 @@ import {captureLabeledForm,proposeLabeledForm,formRemaining} from './form-autofi
 import {AUTOFILL_MODES,completeDraft,isUnverifiedDraft} from './sample-autofill.js'
 import {readReportProfile,saveReportProfile,reportToday,proposeReportDefaults,missingReportProfileFields} from './report-profile.js'
 import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
+import {DESIGN_PRESETS,analyzeDocumentDesign,validateDesignPlan,designPreview,applyDocumentDesign} from './document-design.js'
+import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} from './template-memory.js'
+import {installMiloSuite} from './milo-suite.js'
+import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -28,6 +32,8 @@ let pendingTableEdits=[]
 let pendingTableSnapshot=null
 let fillMode='sample' // default: reviewed examples; strict mode never invents missing fields
 
+let activeRememberedTemplate=null
+let templateLookupSequence=0
 let showCoordinates=false
 let showBlankTargets=false
 let mapTimer
@@ -131,6 +137,7 @@ $('newDocument').onclick=()=>{
   state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[]
   paper.innerHTML=initial;$('filename').value='제목 없는 문서'
   delete paper.dataset.orientation;delete paper.dataset.margin
+  activeRememberedTemplate=null
   localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();scheduleDocumentMap();setStatus('새 문서 준비 완료')
 }
 function download(blob,name){
@@ -170,6 +177,7 @@ async function loadFile(file){
   }
   cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
   dirty=false;updateMode();updateWords();refreshDocumentMap();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
+  void restoreRememberedTemplate()
   toast('파일을 열었습니다. 복잡한 서식은 저장 후 확인하세요.')
 }
 $('fileInput').onchange=async e=>{
@@ -197,7 +205,7 @@ $('templates').onclick=()=>{
       if(dirty&&!confirm('현재 문서를 새 양식으로 교체할까요?'))return
       state=null;cloudId=null;referenceDocuments=[]
       paper.innerHTML='<h1>'+name+'</h1><table><tbody>'+rows.map((r,i)=>'<tr><th>'+r+'</th><td><br></td></tr>').join('')+'</tbody></table><p><br></p>'
-      $('filename').value=name;updateMode();markDirty();refreshDocumentMap();$('modal').close()
+      $('filename').value=name;activeRememberedTemplate=null;updateMode();markDirty();refreshDocumentMap();$('modal').close()
     }
     $('templateList').append(btn)
   }
@@ -222,6 +230,8 @@ $('aiForm').onsubmit=async e=>{
   // Only explicitly selected, authenticated user's documents become AI context.
   const selectedReferences=referenceSnapshot.slice(0,3)
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
+  const businessProfile=user()?profileContext(loadProfile(user().uid,localStorage)):''
+  const businessContext=businessProfile?'\n\n[사용자 등록 기업 정보 - 실제 정보 확인 필요]\n'+businessProfile.slice(0,1800):''
   // The dedicated six-field report engine is preserved; other forms use
   // semantic cell coordinates and a combined user-approved preview.
   const crossTableRequest=/모든\s*표|표\s*전체|문서\s*전체|전체\s*빈칸|모든\s*빈칸|양식\s*전체/.test(prompt) && paper.querySelectorAll('table').length>1
@@ -268,7 +278,7 @@ $('aiForm').onsubmit=async e=>{
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
               model:selectedModel,mode:'labeled',prompt,selectedText,
-              documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
           const data=await response.json()
@@ -318,7 +328,7 @@ $('aiForm').onsubmit=async e=>{
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
               model:selectedModel,mode:'semantic',prompt,
-              selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
           const data=await response.json()
@@ -353,7 +363,7 @@ $('aiForm').onsubmit=async e=>{
         (warnings.length?' '+warnings.join(' '):''))
       return
     }
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
@@ -691,6 +701,7 @@ initCloud(config,u=>{
   $('authButton').textContent=u?.email||'로그인'
   if(!u){referenceDocuments=[];referenceSnapshot=[];cloudId=null}
   $('aiStatus').textContent=u?'연결 상태 확인':'로그인 후 AI 사용'
+  void restoreRememberedTemplate()
 }).then(connected=>{if(!connected)$('aiStatus').textContent='AI·Firebase 설정 전'}).catch(e=>{console.warn('Firebase configuration unavailable',e.message);$('aiStatus').textContent='연결 설정 오류'})
 restoreDraft()
 
@@ -818,6 +829,15 @@ const convertToDocxCopy=(kind)=>{
   return true
 }
 const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
+installMiloSuite({
+ paper,toast,markDirty,openModal,convertToDocxCopy,
+ getUser:user,getToken:token,getModel:()=>selectedModel,
+ getProviderKey:()=>sessionKeys[selectedModel]||'',
+ setFilename:name=>{$('filename').value=name},
+ setPrompt:value=>{$('aiPrompt').value=value;$('aiPrompt').focus()},
+ fileName
+})
+
 window.addEventListener('milosoft:media-action',e=>mediaTools.open(e.detail?.kind))
 
 // Compact AI workspace shortcuts. All generation actions use existing login,
@@ -858,6 +878,117 @@ $('aiFillMode').onchange=()=>{
   fillMode=$('aiFillMode').value==='strict'?'strict':'sample'
   toast(fillMode==='sample'?'전체 자동완성: 부족한 정보에 예시값을 제안합니다.':'실제 정보 우선: 확인되지 않은 항목을 비워 둡니다.')
 }
+
+function templateStatus(message){
+ const status=document.getElementById('templateMemoryStatus')
+ if(status)status.textContent=message
+}
+async function restoreRememberedTemplate(){
+ const sequence=++templateLookupSequence
+ let descriptor
+ try{descriptor=describeTemplate(paper,{title:fileName()})}
+ catch{activeRememberedTemplate=null;templateStatus('양식 없음');return}
+ const uid=user()?.uid||'guest'
+ let found=loadTemplateLocal(uid,descriptor.id)
+ if(!found && user() && isCloudReady()){
+   try{found=await readTemplateMemory(descriptor.id)}
+   catch{templateStatus('서버 양식 규칙 미게시 · 브라우저에서만 검색 가능')}
+ }
+ if(sequence!==templateLookupSequence)return
+ if(found && verifyTemplate(found,paper)){
+   activeRememberedTemplate=found
+   saveTemplateLocal(uid,found)
+   templateStatus('기억된 양식: '+(found.title||'양식')+' · '+found.tableCount+'개 표')
+ }else{
+   activeRememberedTemplate=null
+   templateStatus('새 양식 · 기억하기 가능')
+ }
+}
+async function rememberCurrentTemplate(){
+ let record
+ try{record=describeTemplate(paper,{title:fileName()})}
+ catch(error){toast(error.message);return}
+ const uid=user()?.uid||'guest'
+ try{saveTemplateLocal(uid,record)}catch(error){toast(error.message);return}
+ activeRememberedTemplate=record
+ templateStatus('브라우저 저장됨 · 서버 동기화 확인 중')
+ if(user()&&isCloudReady()){
+   try{
+     await saveTemplateMemory(record)
+     templateStatus('양식 기억 완료 · Firestore 동기화됨')
+   }catch(error){
+     templateStatus('브라우저에만 저장됨 · Firestore 규칙 게시 필요')
+     toast('양식은 현재 브라우저에 저장됐습니다. 별도 Firestore 보안 규칙을 게시해야 다른 기기에서도 동기화됩니다.')
+   }
+ }else{
+   templateStatus('브라우저에만 저장됨 · 로그인하면 서버 동기화 가능')
+ }
+}
+function renderDesignReview(response,source='AI'){
+ const analysis=analyzeDocumentDesign(paper)
+ const verified=validateDesignPlan(paper,response)
+ const preview=designPreview(paper,verified)
+ openModal('<h2>문서 디자인 수정안</h2><p>텍스트와 표 병합은 변경하지 않고 제목·문단·표의 서식만 정리합니다. 원본 DOCX/HWPX를 열었다면 새 DOCX 편집 사본으로 전환해야 합니다.</p><label for="designPreset">디자인 스타일</label><select id="designPreset" class="field"></select><div id="designSummary"></div><button type="button" class="primary" id="designApply">디자인 적용</button>')
+ const select=$('designPreset')
+ for(const [id,preset] of Object.entries(DESIGN_PRESETS)){
+   const option=document.createElement('option');option.value=id;option.textContent=preset.label;select.append(option)
+ }
+ select.value=verified.preset
+ const summary=$('designSummary')
+ const p=document.createElement('p')
+ p.textContent=source+' 분석 · '+analysis.blocks+'개 문단 · '+preview.tableCount+'개 표 · 번호 포함 긴 셀 '+preview.numberedCells+'개. 적용 전후에는 문서 텍스트를 수정하지 않습니다.'
+ summary.append(p)
+ for(const [kind,label] of [['title','제목'],['section','소제목'],['body','본문'],['list','목록']]){
+   const row=document.createElement('p')
+   row.textContent=label+' '+(preview.roles[kind]||0)+'개'
+   summary.append(row)
+ }
+ $('designApply').onclick=()=>{
+   if(state && !convertToDocxCopy('design'))return
+   const count=applyDocumentDesign(paper,{...verified,preset:select.value})
+   markDirty();refreshDocumentMap()
+   $('modal').close()
+   toast('디자인 정리 완료 · 문단 '+count.blocks+'개, 표 '+count.tables+'개. DOCX 저장 후 확인해 주세요.')
+ }
+}
+async function suggestDocumentDesign(){
+ const analysis=analyzeDocumentDesign(paper)
+ if(!analysis.blocks&&!analysis.tables)return toast('디자인을 적용할 문서가 없습니다.')
+ const fallback={preset:'modern',roles:analysis.roles}
+ const access=await token()
+ if(!access){
+   renderDesignReview(fallback,'규칙 기반')
+   return
+ }
+ templateStatus('AI 디자인 분석 중…')
+ try{
+   const response=await fetch('/api/ai',{method:'POST',headers:{
+     'Content-Type':'application/json',Authorization:'Bearer '+access
+   },body:JSON.stringify({model:selectedModel,mode:'design',
+     prompt:'문서를 읽고 제목·소제목·본문의 적합한 서식 역할을 구분하고 하나의 스타일을 추천해 줘.',
+     documentText:JSON.stringify({blocks:analysis.roles.slice(0,120),tables:analysis.tables}),
+     providerKey:sessionKeys[selectedModel]||''})})
+   const data=await response.json()
+   if(!response.ok)throw new Error(data.error||'AI 호출 실패')
+   renderDesignReview(data.design||fallback,'AI')
+ }catch(error){
+   toast('AI 디자인 분석 오류 · 규칙 기반 디자인안을 사용합니다.')
+   renderDesignReview(fallback,'규칙 기반')
+ }
+}
+const designTools=document.createElement('div')
+designTools.className='document-design-tools'
+designTools.setAttribute('aria-label','AI 디자인 및 양식 기억')
+const designButton=document.createElement('button')
+designButton.type='button';designButton.textContent='AI 문서 디자인';designButton.onclick=suggestDocumentDesign
+const rememberButton=document.createElement('button')
+rememberButton.type='button';rememberButton.textContent='양식 기억';rememberButton.onclick=rememberCurrentTemplate
+const statusLabel=document.createElement('span')
+statusLabel.id='templateMemoryStatus';statusLabel.textContent='양식 인식 준비'
+designTools.append(designButton,rememberButton,statusLabel)
+document.querySelector('.milosoft-ribbon')?.append(designTools)
+void restoreRememberedTemplate()
+
 const coordinateBar=document.createElement('div')
 coordinateBar.className='coordinate-toolbar'
 coordinateBar.innerHTML='<button type="button" id="coordinateToggle" aria-pressed="false">표 좌표 보기</button>'+

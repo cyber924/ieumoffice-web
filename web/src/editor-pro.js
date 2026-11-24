@@ -26,6 +26,11 @@ const ribbon = {
   ],
   '도구': [
     ['문서 검사','inspect'],['맞춤법 검사','spell'],['버전 비교','compare'],['AI 참고 검색','searchAI'],['문서 찾기','myDocuments']
+  ],
+  '마일로 적용': [
+    ['이미지 갤러리','miloGallery'],['프롬프트','miloPrompts'],['AI 추천','miloRecommend'],
+    ['문서 번역','miloTranslate'],['문체 변환','miloTone'],['사업공고','miloNotices'],
+    ['기업 프로필','miloProfile'],['PDF 양식 인식','miloPdf']
   ]
 }
 const needsNew = new Set(['today','hr','link','box','font','size','color','highlight','lineHeight','right','justify','heading','bullets','numbers','landscape','portrait','marginNormal','marginNarrow','deleteRow','deleteColumn','splitCell','cellBackground','borderColor','marks'])
@@ -186,6 +191,7 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     if(['newDocument','fileInput','myDocuments','saveFile','cloudSave','cloudSaveAs','printDoc','templates','undo','redo','bold','italic','underline','alignLeft','alignCenter','insertTable','addRow','addColumn','mergeCells'].includes(id)){
       click(id==='openFile'?'fileInput':id);return
     }
+    if(id.startsWith('milo')){window.dispatchEvent(new CustomEvent('milosoft:milo-action',{detail:{action:id}}));return}
     switch(id){
       case 'openFile':document.getElementById('fileInput')?.click();break
       case 'selectAll':restore();document.execCommand('selectAll');break

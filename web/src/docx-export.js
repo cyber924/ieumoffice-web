@@ -272,9 +272,11 @@ export async function validateDocxTables(blob,paper){
   if(wRows.length!==dRows.length)throw new Error('표 '+(i+1)+'의 행이 보존되지 않아 저장을 중단했습니다.')
   const xmlContent=descendants(actual[i],'t').map(n=>n.textContent||'').join(' ')
   for(const row of dRows)for(const cell of Array.from(row.cells||[])){
-   const value=text(cell).replace(/\s+/g,' ').trim()
-   // Table text must not be emitted as a body paragraph outside the table.
-   if(value&&!xmlContent.replace(/\s+/g,' ').includes(value)){
+   const value=text(cell).replace(/\s+/g,'').trim()
+   // Word's <w:p> boundaries may split a paragraph into multiple text nodes.
+   // Compare ordered non-whitespace characters so paragraph formatting does
+   // not produce a false "missing cell" error after design normalization.
+   if(value&&!xmlContent.replace(/\s+/g,'').includes(value)){
     throw new Error('표 '+(i+1)+'의 셀 내용이 DOCX에 누락되어 저장을 중단했습니다.')
    }
    cells++

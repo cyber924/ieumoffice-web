@@ -113,3 +113,41 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 .ai-fill-mode label{font-size:11px;font-weight:650;color:#3e5273}
 .ai-fill-mode select{max-width:100%;padding:6px 8px;border:1px solid #cddbf6;border-radius:7px;font-size:11px;background:white;color:#294575}
 .ai-fill-mode small{display:block;width:100%;font-size:10px;color:#667b93;line-height:1.5}
+
+/* Planned document design, explicit memory status and review controls */
+.document-design-tools{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:7px 0;border-top:1px solid #e9edf5}
+.document-design-tools button{border:1px solid #cbd9ec;border-radius:7px;background:#f8fbff;padding:7px 11px;font-size:11px;color:#2b4c79}
+.document-design-tools button:hover{background:#e8f0ff;border-color:#9ab5ef}
+#templateMemoryStatus{font-size:10px;color:#667b93;max-width:360px;overflow-wrap:anywhere}
+#designSummary{margin:12px 0;font-size:12px;line-height:1.6;color:#52627a}
+#designSummary p{margin:5px 0}
+@media print{.document-design-tools{display:none!important}}
+
+/* Milo 2026 document suite */
+.milo-modal-body{display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto}
+.milo-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.milo-filter input,.milo-filter select,.milo-field input,.milo-field textarea,.milo-field select{border:1px solid #d4ddeb;background:#fff;border-radius:8px;padding:9px 11px;font:inherit;font-size:12px;min-width:0}
+.milo-field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#425574}
+.milo-field span{font-weight:600}
+.milo-list{display:flex;flex-direction:column;gap:8px}
+.milo-list-item,.milo-notice-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:13px;border:1px solid #e2e8f2;border-radius:10px;background:#fff}
+.milo-list-item>div{display:flex;flex:1;flex-direction:column;gap:5px;min-width:170px}
+.milo-list-item strong,.milo-notice-row strong{font-size:13px;color:#253952}
+.milo-list-item small{font-size:11px;color:#69809a;line-height:1.55}
+.milo-modal-body button{font-size:11px;border:1px solid #cdd8e9;border-radius:8px;padding:8px 11px;background:#fff;color:#425779;cursor:pointer}
+.milo-modal-body button.milo-primary{background:#355dec;border-color:#355dec;color:#fff}
+.milo-modal-body button:disabled{opacity:.55;cursor:not-allowed}
+.milo-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:10px}
+.milo-image-card{display:flex;flex-direction:column;gap:6px;min-width:0;border:1px solid #e1e7f0;border-radius:10px;padding:8px;background:#fff}
+.milo-image-card img{width:100%;height:110px;object-fit:cover;border-radius:6px;background:#f2f5fb}
+.milo-image-card strong{font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.milo-image-card input{font-size:9px;padding:5px;width:100%;border:1px solid #e3e9f2;border-radius:5px}
+.milo-compare-row{padding:11px;border:1px solid #dae4f2;border-radius:8px;margin-bottom:8px}
+.milo-compare-row small{display:block;color:#7b8b9d;white-space:pre-wrap;font-size:11px}
+.milo-compare-row p{margin-top:8px;font-size:12px;white-space:pre-wrap;color:#283f5b}
+.milo-transform-preview{max-height:37vh;overflow:auto}
+.milo-notice-row{display:block}
+.milo-notice-row p{font-size:12px;line-height:1.65;color:#5c6c85;white-space:pre-wrap}
+.milo-notice-row button{margin-right:8px;margin-bottom:5px}
+.milosoft-ribbon .ribbon-tabs button[data-tab="마일로 적용"]{font-weight:700;color:#315bd5}
+@media(max-width:600px){.milo-gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.milo-list-item{display:block}}
