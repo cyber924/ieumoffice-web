@@ -13,17 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: true
-      - name: Import pinned upstream release
+      - name: Import pinned release snapshot (no unrelated Git history)
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/pblsketch/ieumoffice.git
           git fetch --no-tags --depth=1 upstream refs/tags/v0.13.2
-          git merge --allow-unrelated-histories -X theirs --no-edit FETCH_HEAD || {
-            echo "Automatic merge failed. Manual conflict review required."
-            exit 1
-          }
+          mkdir -p "$RUNNER_TEMP/ieumoffice-upstream"
+          git archive FETCH_HEAD | tar -x -C "$RUNNER_TEMP/ieumoffice-upstream"
+          rsync -a --exclude '/web/' --exclude '/.github/workflows/import-upstream.yml' "$RUNNER_TEMP/ieumoffice-upstream/" ./
+          git add -A
+          if git diff --cached --quiet; then echo "Source already synchronized"; exit 0; fi
+          git commit -m "vendor: import IeumOffice v0.13.2 source snapshot"
           git push origin HEAD:main
