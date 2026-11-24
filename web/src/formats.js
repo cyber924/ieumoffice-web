@@ -28,12 +28,17 @@ function setText(node, value, isHwp) {
   const ns=isHwp?(node.namespaceURI||'http://www.hancom.co.kr/hwpml/2011/paragraph'):'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
   const para=node.localName==='p'?node:first(node,'p')
   if(!para) throw new Error('텍스트를 추가할 문단을 찾을 수 없습니다.')
-  const run=doc.createElementNS(ns,prefix+':run')
+  const existing=direct(para,'run')[0]
+  const run=existing || doc.createElementNS(ns,prefix+':run')
   const t=doc.createElementNS(ns,prefix+':t')
   t.textContent=text
   if(!isHwp)t.setAttribute('xml:space','preserve')
   run.appendChild(t)
-  para.appendChild(run)
+  if(!existing){
+    const layout=direct(para,'linesegarray')[0]
+    if(layout)para.insertBefore(run,layout)
+    else para.appendChild(run)
+  }
 }
 function sizeGuard(bytes,zip) {
   if(bytes.byteLength>MAX_FILE)throw new Error('15MB 이하의 문서만 지원합니다.')
@@ -47,7 +52,7 @@ function makeBinding(state,node) {
 function htmlPara(state,node) {
   const id=makeBinding(state,node)
   const t=textOf(node)
-  return '<p class="doc-paragraph" data-bind="'+id+'">'+(t?enc(t):'<br>')+'</p>'
+  return '<p class="doc-paragraph" data-bind="'+id+'"'+hwpParagraphStyle(state,node)+'>'+(t?enc(t):'<br>')+'</p>'
 }
 
 function attrOf(n,key,defaultValue='') {
@@ -84,12 +89,83 @@ function tableCellLayout(cell,type) {
   const grid=first(cell,'gridSpan')
   return {colSpan:Math.max(1,Math.min(30,Number(attrOf(grid,'val','1'))||1)),rowSpan:1,colAddr:-1,width:null}
 }
+
+function hwpHeaderStyles(doc){
+  const para=new Map(),chars=new Map(),fonts=new Map()
+  for(const n of descendants(doc,'paraPr')){
+    const p=first(n,'align'),alignment=attrOf(p,'horizontal','LEFT')
+    para.set(attrOf(n,'id'),alignment==='CENTER'?'center':alignment==='RIGHT'?'right':alignment==='JUSTIFY'?'justify':'left')
+  }
+  for(const group of descendants(doc,'fontface')){
+    if(attrOf(group,'lang')!=='HANGUL')continue
+    for(const font of direct(group,'font'))fonts.set(attrOf(font,'id'),attrOf(font,'face'))
+  }
+  for(const n of descendants(doc,'charPr')){
+    const fontRef=first(n,'fontRef')
+    const font=fonts.get(attrOf(fontRef,'hangul'))
+    const height=Number(attrOf(n,'height'))
+    chars.set(attrOf(n,'id'),{
+      font:font&&/^[\p{L}\p{N} ._-]{1,40}$/u.test(font)?font:'',
+      size:Number.isFinite(height)&&height>=600&&height<=3000?height/100:0
+    })
+  }
+  return {para,chars}
+}
+function hwpParagraphStyle(state,node){
+  if(state.type!=='hwpx'||!state.hwpStyles)return ''
+  const align=state.hwpStyles.para.get(attrOf(node,'paraPrIDRef'))||'left'
+  const run=direct(node,'run')[0]
+  const char=state.hwpStyles.chars.get(attrOf(run,'charPrIDRef'))
+  const css=['text-align:'+align]
+  if(char?.font)css.push('font-family:'+char.font.replace(/[;{}<>]/g,''))
+  if(char?.size)css.push('font-size:'+char.size+'pt')
+  return ' style="'+css.join(';')+'"'
+}
+function hwpTableColumns(node,rows) {
+  const count=Math.max(1,Math.min(64,Number(attrOf(node,'colCnt'))||1))
+  const units=Array(count).fill(0)
+  const multi=[]
+  for(const row of rows){
+    for(const cell of direct(row,'tc')){
+      const l=tableCellLayout(cell,'hwpx')
+      const width=Number(attrOf(first(cell,'cellSz'),'width'))||0
+      if(!Number.isFinite(l.colAddr)||l.colAddr<0||l.colAddr+l.colSpan>count)continue
+      if(l.colSpan===1 && width>0)units[l.colAddr]=Math.max(units[l.colAddr],width)
+      else if(width>0)multi.push({start:l.colAddr,span:l.colSpan,width})
+    }
+  }
+  // Multi-column cells fill any unknown column widths after single-column sizes.
+  for(const item of multi){
+    const unknown=[]
+    let known=0
+    for(let i=item.start;i<item.start+item.span;i++) {
+      if(units[i]>0)known+=units[i];else unknown.push(i)
+    }
+    const gap=Math.max(1,(item.width-known)/Math.max(1,unknown.length))
+    for(const i of unknown)units[i]=gap
+  }
+  let sum=units.reduce((a,b)=>a+b,0)
+  if(!sum)units.fill(1),sum=count
+  const unknown=units.filter(x=>x===0).length
+  if(unknown) {
+    const filler=sum/Math.max(1,count-unknown)
+    for(let i=0;i<count;i++)if(!units[i])units[i]=filler
+    sum=units.reduce((a,b)=>a+b,0)
+  }
+  return units.map(x=>Math.round(x/sum*100000)/1000)
+}
+
 function htmlTable(state,node,type,depth=0) {
   if(depth>3)return '<p class="import-warning">중첩 표 미리보기 제한 · 원본 파일에는 유지됩니다.</p>'
   const rows=direct(node,'tr')
   const tableWidth=type==='hwpx'?hwpUnitToPx(attrOf(first(node,'sz'),'width')):null
-  const attributes=' data-kind="'+type+'"'+(tableWidth?' style="width:min(100%,'+tableWidth+'px);table-layout:fixed"':'')
-  let html='<table'+attributes+'><tbody>'
+  const cols=type==='hwpx'?hwpTableColumns(node,rows):null
+  const attributes=' data-kind="'+type+'" data-hwp-cols="'+(cols?.length||0)+'"'+
+    (cols?.length>12?' data-dense="true"':'')+
+    (tableWidth?' style="width:min(100%,'+tableWidth+'px);table-layout:fixed"':'')
+  let html='<table'+attributes+'>'
+  if(cols)html+='<colgroup>'+cols.map(w=>'<col style="width:'+w+'%">').join('')+'</colgroup>'
+  html+='<tbody>'
   for(const row of rows) {
     const rowId=makeBinding(state,row)
     html+='<tr data-row-bind="'+rowId+'">'
@@ -104,7 +180,7 @@ function htmlTable(state,node,type,depth=0) {
       let attrs=' data-bind="'+id+'"'
       if(dims.colSpan>1)attrs+=' colspan="'+dims.colSpan+'"'
       if(dims.rowSpan>1)attrs+=' rowspan="'+dims.rowSpan+'"'
-      if(dims.width)attrs+=' style="width:'+dims.width+'px"'
+      if(type==='docx'&&dims.width)attrs+=' style="width:'+dims.width+'px"'
       const value=tableText(cell)
       const nested=direct(first(cell,'subList')||cell,'tbl')
       const nestedHtml=nested.length?nested.map(n=>htmlTable(state,n,type,depth+1)).join(''):''
@@ -133,7 +209,7 @@ function buildHwpxParagraph(state,node) {
     if(!buffer)return
     // Only bind a plain paragraph; a mixed paragraph must not overwrite tables.
     const bind=hasObjects?' contenteditable="false" data-mixed="true"':' data-bind="'+makeBinding(state,node)+'"'
-    result+='<p class="doc-paragraph"'+bind+'>'+enc(buffer)+'</p>'
+    result+='<p class="doc-paragraph"'+bind+hwpParagraphStyle(state,node)+'>'+enc(buffer)+'</p>'
     buffer=''
   }
   for(const run of runs){
@@ -171,7 +247,11 @@ export async function openPackage(file) {
   if(bytes.byteLength>MAX_FILE)throw new Error('15MB 이하의 문서만 지원합니다.')
   const zip=await JSZip.loadAsync(bytes)
   sizeGuard(bytes,zip)
-  const state={type:ext,filename:file.name,zip,documents:[],bindings:new Map(),seq:0,originalBytes:bytes}
+  const state={type:ext,filename:file.name,zip,documents:[],bindings:new Map(),seq:0,originalBytes:bytes,tableStats:null,hwpStyles:null}
+  if(ext==='hwpx' && zip.file('Contents/header.xml')){
+    try{state.hwpStyles=hwpHeaderStyles(xmlRead(await zip.file('Contents/header.xml').async('string')))}
+    catch{state.hwpStyles=null}
+  }
   if(ext==='docx'){
     const entry=zip.file('word/document.xml')
     if(!entry)throw new Error('DOCX 문서 본문이 없습니다.')
@@ -192,6 +272,13 @@ export async function openPackage(file) {
       all+=buildHwpxHtml(state,doc)
     }
     state.html=all
+    const tables=state.documents.flatMap(entry=>descendants(entry.doc,'tbl'))
+    state.tableStats={
+      tables:tables.length,
+      rows:tables.reduce((sum,t)=>sum+direct(t,'tr').length,0),
+      cells:tables.reduce((sum,t)=>sum+direct(t,'tr').reduce((n,row)=>n+direct(row,'tc').length,0),0),
+      maxColumns:Math.max(0,...tables.map(t=>Number(attrOf(t,'colCnt'))||0))
+    }
   }
   return state
 }
@@ -228,6 +315,7 @@ function bindNewRows(state,paper){
 export async function savePackage(state,paper) {
   if(!state)return createDocx(paper)
   bindNewRows(state,paper)
+  let changed=false
   for(const el of paper.querySelectorAll('[data-bind]')){
     const item=state.bindings.get(el.dataset.bind)
     if(!item || el.tagName==='TR' || el.dataset.mixed==='true')continue
@@ -235,10 +323,12 @@ export async function savePackage(state,paper) {
     if(text!==item.text){
       setText(item.node,text,state.type==='hwpx')
       item.text=text
+      changed=true
     }
   }
   const serializer=new XMLSerializer()
-  for(const entry of state.documents)state.zip.file(entry.path,serializer.serializeToString(entry.doc))
+  // Updating only changed sections keeps original HWPX header, styles and unrelated parts intact.
+  if(changed)for(const entry of state.documents)state.zip.file(entry.path,serializer.serializeToString(entry.doc))
   return new Blob([await state.zip.generateAsync({type:'uint8array',compression:'DEFLATE'})],{type:state.type==='docx'?'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'application/zip'})
 }
 export function importedModeLimitations(state) {
