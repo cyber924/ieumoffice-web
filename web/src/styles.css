@@ -64,3 +64,23 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
 .paper table[data-kind="hwpx"][data-dense="true"] td{min-width:0;padding:2px 0;font-size:10px;white-space:normal;word-break:break-all}
 .paper table[data-kind="hwpx"][data-dense="true"]{font-size:10px}
 .paper table[data-kind="hwpx"] td[rowspan]{vertical-align:middle}
+
+/* MiloSoft full insert ribbon: selectable Unicode, font choices, resizable shapes */
+.media-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 0 3px}
+.media-toolbar button{border:1px solid #dfe5ef;background:#fafbfe;border-radius:6px;padding:7px 11px;font-size:11px}
+.media-toolbar button:hover{border-color:#9fb8f4;background:#edf3ff}
+.media-dialog{padding:20px;max-height:min(76vh,680px);overflow:auto;border-radius:14px}
+.media-dialog h3{font-size:16px;font-weight:700;margin:0 0 10px}
+.media-dialog .media-options{display:flex;flex-direction:column;gap:8px}
+.media-dialog .media-close{margin-top:15px}
+.media-dialog .media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.media-dialog .media-grid button{padding:13px 6px;font-size:12px}
+.media-dialog .symbol-category{font-size:11px;font-weight:700;color:#63748f;margin-top:7px}
+.media-dialog .symbol-grid{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:5px}
+.media-dialog .symbol-grid button{font-family:"Noto Sans KR",sans-serif;font-size:19px;min-width:0;min-height:40px;padding:2px}
+.media-dialog .media-property-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.media-dialog .media-property-grid label{font-size:11px;color:#66758d}
+.media-dialog .media-property-grid input{display:block;width:100%;padding:8px 10px;margin-top:5px;border:1px solid #dfe5ef;border-radius:7px}
+.paper img[data-milo-media]{cursor:pointer;border-radius:2px}
+.paper img[data-milo-media]:hover{outline:2px solid #81a0fa;outline-offset:3px}
+@media(max-width:720px){.media-dialog .symbol-grid{grid-template-columns:repeat(7,minmax(0,1fr))}.media-dialog .media-grid{grid-template-columns:1fr 1fr}}
