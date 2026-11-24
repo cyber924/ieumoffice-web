@@ -1,0 +1,35 @@
+name: Verify business report six-field autofill
+on:
+  push:
+    branches: [fix/report-six-fields]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund jsdom@26.1.0
+      - name: Syntax
+        working-directory: web
+        run: |
+          node --check src/business-report.js
+          node --check src/main.js
+          node --check api/ai.js
+      - name: Report six-field tests
+        working-directory: web
+        run: node --test tests/business-report.test.mjs
+      - name: Existing HWPX cell tests
+        working-directory: web
+        run: node --test tests/hwpx-ai-fill.test.mjs
+      - name: Production build
+        working-directory: web
+        run: npm run build
