@@ -194,10 +194,51 @@ export function addTableColumn(state,element){
   }
   return true
 }
-function wP(text,{center=false,bold=false}={}){
-  const pPr=center?'<w:pPr><w:jc w:val="center"/></w:pPr>':''
-  const rPr=bold?'<w:rPr><w:b/></w:rPr>':''
-  return '<w:p>'+pPr+'<w:r>'+rPr+'<w:t xml:space="preserve">'+enc(text)+'</w:t></w:r></w:p>'
+const twips=n=>Math.round(n*20)
+const fromColor=(x,fallback='000000')=>/^#[0-9a-fA-F]{6}$/.test(x||'')?x.slice(1).toUpperCase():fallback
+function runXml(node,style={}){
+  if(node.nodeType===3)return node.nodeValue?'<w:r>'+runPr(style)+'<w:t xml:space="preserve">'+enc(node.nodeValue)+'</w:t></w:r>':''
+  if(node.nodeType!==1)return ''
+  if(node.tagName==='BR')return '<w:r><w:br/></w:r>'
+  if(node.tagName==='HR')return ''
+  const next={...style}
+  if(node.matches('b,strong'))next.bold=true
+  if(node.matches('i,em'))next.italic=true
+  if(node.matches('u'))next.underline=true
+  if(node.style.fontWeight==='bold'||Number(node.style.fontWeight)>=600)next.bold=true
+  if(node.style.fontStyle==='italic')next.italic=true
+  if(node.style.textDecoration.includes('underline'))next.underline=true
+  if(node.style.fontFamily)next.font=node.style.fontFamily.replace(/['"]/g,'').split(',')[0].trim()
+  if(node.style.fontSize){const size=parseFloat(node.style.fontSize);if(Number.isFinite(size)&&size>=7&&size<=72)next.size=node.style.fontSize.endsWith('px')?size*.75:size}
+  if(node.style.color)next.color=node.style.color
+  if(node.style.backgroundColor)next.highlight=node.style.backgroundColor
+  let value=''
+  for(const child of node.childNodes)value+=runXml(child,next)
+  return value
+}
+function runPr(s){
+  let xml=''
+  if(s.bold)xml+='<w:b/>'
+  if(s.italic)xml+='<w:i/>'
+  if(s.underline)xml+='<w:u w:val="single"/>'
+  if(s.size)xml+='<w:sz w:val="'+Math.round(s.size*2)+'"/>'
+  if(s.font)xml+='<w:rFonts w:ascii="'+enc(s.font)+'" w:hAnsi="'+enc(s.font)+'" w:eastAsia="'+enc(s.font)+'"/>'
+  if(s.color){const hex=fromColor(s.color);if(hex!=='000000'||s.color==='#000000')xml+='<w:color w:val="'+hex+'"/>'}
+  if(s.highlight)xml+='<w:shd w:fill="'+fromColor(s.highlight,'FFFF00')+'"/>'
+  return xml?'<w:rPr>'+xml+'</w:rPr>':''
+}
+function wParagraph(el, options={}){
+  const align=el?.style?.textAlign||(options.heading?'center':'left')
+  const a={left:'left',right:'right',center:'center',justify:'both',start:'left',end:'right'}
+  let pr='<w:pPr><w:jc w:val="'+(a[align]||'left')+'"/>'
+  if(options.heading)pr+='<w:spacing w:after="260"/><w:keepNext/>'
+  if(el?.style?.lineHeight){const v=parseFloat(el.style.lineHeight);if(Number.isFinite(v)&&v>=1&&v<=3)pr+='<w:spacing w:line="'+Math.round(v*240)+'" w:lineRule="auto"/>'}
+  pr+='</w:pPr>'
+  const style=options.heading?{bold:true,size:options.heading===1?18:15}:{}
+  let runs=''
+  if(el?.childNodes)for(const child of el.childNodes)runs+=runXml(child,style)
+  if(!runs)runs='<w:r><w:t xml:space="preserve">'+enc(el?.innerText||'')+'</w:t></w:r>'
+  return '<w:p>'+pr+runs+'</w:p>'
 }
 function wTable(el){
   const rows=Array.from(el.rows)
@@ -213,21 +254,35 @@ function wTable(el){
       const colspan=Math.max(1,cell.colSpan)
       xml+='<w:tc><w:tcPr><w:tcW w:w="'+Math.floor(9000*colspan/count)+'" w:type="dxa"/>'
       if(colspan>1)xml+='<w:gridSpan w:val="'+colspan+'"/>'
-      xml+='</w:tcPr>'+wP(cell.innerText)+'</w:tc>'
+      if(cell.rowSpan>1)xml+='<w:vMerge w:val="restart"/>'
+      const bg=cell.style.backgroundColor
+      if(bg&&/^#[0-9a-fA-F]{6}$/.test(bg))xml+='<w:shd w:fill="'+fromColor(bg)+'"/>'
+      xml+='</w:tcPr>'+wParagraph(cell)+'</w:tc>'
     }
     xml+='</w:tr>'
   }
   return xml+'</w:tbl>'
 }
+function convertNode(el){
+  if(el.tagName==='TABLE')return wTable(el)
+  if(el.tagName==='HR')return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6"/></w:pBdr></w:pPr></w:p>'
+  if(el.tagName==='UL'||el.tagName==='OL'){
+    return Array.from(el.children).map((li,i)=>wParagraph(li)).join('')
+  }
+  return wParagraph(el,{heading:el.tagName==='H1'?1:el.tagName==='H2'?2:0})
+}
 export async function createDocx(paper) {
   let body=''
-  for(const el of paper.children){
-    if(el.tagName==='TABLE')body+=wTable(el)
-    else if(el.tagName==='H1'||el.tagName==='H2')body+=wP(el.innerText,{center:true,bold:true})
-    else body+=wP(el.innerText)
-  }
-  if(!body)body=wP('')
-  const word='<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>'
+  for(const el of paper.children)body+=convertNode(el)
+  if(!body)body=wParagraph(null)
+  const landscape=paper.dataset.orientation==='landscape'
+  const narrow=paper.dataset.margin==='narrow'
+  const page=landscape?{w:16838,h:11906}:{w:11906,h:16838}
+  const margin=narrow?720:1440
+  const sect='<w:sectPr><w:pgSz w:w="'+page.w+'" w:h="'+page.h+'"'+(landscape?' w:orient="landscape"':'')+'/>'+
+    '<w:pgMar w:top="'+margin+'" w:right="'+margin+'" w:bottom="'+margin+'" w:left="'+margin+'"/></w:sectPr>'
+  const word='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+sect+'</w:body></w:document>'
   const zip=new JSZip()
   zip.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
   zip.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')

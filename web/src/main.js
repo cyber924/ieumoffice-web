@@ -1,4 +1,5 @@
 import './styles.css'
+import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits} from './table-ai.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
@@ -419,3 +420,114 @@ initCloud(config,u=>{
   $('aiStatus').textContent=u?'연결 상태 확인':'로그인 후 AI 사용'
 }).then(connected=>{if(!connected)$('aiStatus').textContent='AI·Firebase 설정 전'}).catch(e=>{console.warn('Firebase configuration unavailable',e.message);$('aiStatus').textContent='연결 설정 오류'})
 restoreDraft()
+
+function documentInspection(){
+ const tables=Array.from(paper.querySelectorAll('table'))
+ const warnings=[]
+ let empty=0,invalidDates=0,missingLabels=0
+ for(const [ti,tbl] of tables.entries()){
+  for(const [ri,row] of Array.from(tbl.rows).entries()){
+   const cells=Array.from(row.cells)
+   if(cells.length===2&&ri>0){
+    const label=(cells[0].innerText||'').trim()
+    const val=(cells[1].innerText||'').trim()
+    if(label&&!val){empty++;warnings.push('표 '+(ti+1)+' · '+label+': 내용 없음')}
+    if(/날짜|작성일|보고일|일자/.test(label)&&val&&!/^\d{4}[.\/-]\s*\d{1,2}[.\/-]\s*\d{1,2}/.test(val))invalidDates++
+   }
+  }
+ }
+ if(paper.innerText.trim().length<10)warnings.push('문서 본문이 거의 비어 있습니다.')
+ if(invalidDates)warnings.push('날짜 형식 확인 필요: '+invalidDates+'곳')
+ if(state)warnings.push('가져온 문서의 레이아웃은 Word/한컴에서 반드시 재확인하세요.')
+ openModal('<h2>문서 검사</h2><p>규칙 기반 점검 결과입니다. 외부 AI로 내용이 전송되지 않습니다.</p><div id="inspectionResults"></div>')
+ const box=$('inspectionResults')
+ const summary=document.createElement('p')
+ summary.textContent='문서 길이: '+paper.innerText.trim().length+'자 · 표: '+tables.length+'개 · 빈 필드: '+empty+'개'
+ box.append(summary)
+ if(!warnings.length){const p=document.createElement('p');p.textContent='기본 검사에서 발견된 문제가 없습니다.';box.append(p)}
+ for(const w of warnings.slice(0,40)){const p=document.createElement('p');p.textContent='• '+w;box.append(p)}
+}
+function diffLines(before,after){
+ const a=String(before||'').split(/\r?\n/),b=String(after||'').split(/\r?\n/)
+ const max=Math.max(a.length,b.length),items=[]
+ for(let i=0;i<max;i++){
+  if((a[i]||'')===(b[i]||''))continue
+  items.push({line:i+1,old:a[i]||'',now:b[i]||''})
+  if(items.length>=60)break
+ }
+ return {items,oldCount:a.length,newCount:b.length}
+}
+async function compareHistory(){
+ if(!cloudId)return toast('먼저 클라우드에 저장한 문서를 열어 주세요.')
+ if(!user())return loginDialog()
+ openModal('<h2>버전 내용 비교</h2><p>이전에 저장한 문서 본문과 현재 편집 중인 내용을 줄 단위로 비교합니다. 표 스타일과 레이아웃의 차이까지 비교하지는 않습니다.</p><div id="historyCompare">이전 버전을 조회 중…</div>')
+ try{
+  const versions=await listRevisions(cloudId)
+  if(!versions.length)throw new Error('비교할 저장 버전이 없습니다.')
+  const host=$('historyCompare');if(!host)return
+  host.replaceChildren()
+  const select=document.createElement('select');select.className='field'
+  for(const v of versions){const o=document.createElement('option');o.value=v.id;o.textContent='버전 '+v.revisionNumber+' · '+dateText(v.savedAt);select.append(o)}
+  const button=document.createElement('button');button.textContent='비교하기'
+  const result=document.createElement('div');result.className='compare-diff'
+  button.onclick=async()=>{
+   result.textContent='비교 중…'
+   try{
+    const text=await readCloudIndexed({id:cloudId,revisionId:select.value,textPreview:''})
+    const diff=diffLines(text,paper.innerText)
+    result.replaceChildren()
+    const title=document.createElement('p');title.textContent='변경된 줄 '+diff.items.length+'개 (최대 60줄 표시)';result.append(title)
+    for(const item of diff.items){
+     const row=document.createElement('div')
+     const before=document.createElement('div');before.className='removed';before.textContent='− '+item.line+'행: '+item.old
+     const after=document.createElement('div');after.className='added';after.textContent='+ '+item.line+'행: '+item.now
+     row.append(before,after);result.append(row)
+    }
+    if(!diff.items.length)result.textContent='비교한 범위에서 달라진 줄이 없습니다.'
+   }catch(e){result.textContent='비교 실패: '+e.message}
+  }
+  host.append(select,button,result)
+ }catch(e){if($('historyCompare'))$('historyCompare').textContent=e.message}
+}
+async function searchReferences(){
+ if(!user())return loginDialog()
+ openModal('<h2>AI 참고 문서 검색</h2><p>내 문서에서 관련 내용을 찾고, AI 참고 자료로 선택할 수 있습니다.</p><input id="ragSearch" class="field" placeholder="예: 업무보고 회의록 비용 정산"><div id="ragResults">검색어를 입력하고 검색해 주세요.</div><button type="button" id="ragSearchButton">문서 검색</button>')
+ $('ragSearchButton').onclick=async()=>{
+  const query=$('ragSearch').value.trim().toLocaleLowerCase()
+  if(!query)return toast('검색어를 입력해 주세요.')
+  const result=$('ragResults');result.textContent='내 문서 검색 중…'
+  try{
+    const rows=await listCloud()
+    const terms=query.split(/\s+/).filter(x=>x.length>1).slice(0,8)
+    const ranked=rows.map(row=>{
+      const text=((row.name||'')+' '+(row.textPreview||'')).toLocaleLowerCase()
+      const score=terms.reduce((sum,t)=>sum+(row.name||'').toLocaleLowerCase().includes(t)*3+Number(text.includes(t)),0)
+      return {row,score}
+    }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,12)
+    result.replaceChildren()
+    if(!ranked.length){result.textContent='검색 결과가 없습니다.';return}
+    for(const {row,score} of ranked){
+      const line=document.createElement('div');line.className='cloud-document'
+      const description=document.createElement('div');description.className='cloud-document-info'
+      const title=document.createElement('strong');title.textContent=row.name
+      const preview=document.createElement('small');preview.textContent=(row.textPreview||'').slice(0,160)
+      description.append(title,preview)
+      const select=document.createElement('button');select.textContent='AI 참고 추가'
+      select.onclick=async()=>{
+        if(referenceDocuments.includes(row.id))return toast('이미 선택한 참고 문서입니다.')
+        if(referenceDocuments.length>=3)return toast('최대 3개의 참고 문서를 선택할 수 있습니다.')
+        select.disabled=true
+        try{
+          const text=await readCloudIndexed(row)
+          if(!text)return toast('저장된 본문을 찾지 못했습니다.')
+          referenceDocuments.push(row.id);referenceSnapshot.push({id:row.id,name:row.name,text})
+          select.textContent='선택됨'
+          toast('AI 참고 자료로 선택했습니다.')
+        }catch(e){toast(e.message)}finally{select.disabled=false}
+      }
+      line.append(description,select);result.append(line)
+    }
+  }catch(e){result.textContent='검색 실패: '+e.message}
+ }
+}
+installRibbon({paper,isImported:()=>Boolean(state),markDirty,toast,getCell,inspect:documentInspection,compare:compareHistory,searchAI:searchReferences})
