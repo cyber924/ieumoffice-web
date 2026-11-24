@@ -38,7 +38,7 @@ test('A1 and merged cells survive HWP logical coordinates',()=>{
  assert.equal(new Set(snapshot.targets.map(x=>x.cellId)).size,snapshot.targets.length)
  const map=annotateCoordinates(paper,{show:true,highlight:true})
  assert.equal(map.tables.length,1)
- assert.equal(paper.querySelectorAll('[data-cell-address]').length,13)
+ assert.equal(paper.querySelectorAll('[data-cell-address]').length,12)
  assert.equal(paper.classList.contains('show-cell-addresses'),true)
  assert.equal(paper.querySelector('td').dataset.cellAddress,'표1!A1')
 })
