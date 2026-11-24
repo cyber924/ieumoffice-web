@@ -19,7 +19,7 @@ function external(url){
 }
 function short(s,size=150){return String(s||'').slice(0,size)}
 function parseJSON(result){return result.json().catch(()=>({}))}
-export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getProviderKey,setFilename,setPrompt,fileName,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime}){
+export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getProviderKey,setFilename,setPrompt,fileName,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh}){
  let savedRange=null
  const cache={gallery:[],nextCursor:null,business:[]}
  const uid=()=>getUser()?.uid||'guest'
@@ -260,8 +260,12 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   const refresh=async()=>{
    if(!getUser()){status.textContent='공고 DB 이용을 위해 로그인해 주세요.';return}
    status.textContent='기업마당에서 공고 수집 중…'
-   try{const auth=await getToken();if(!auth)throw Error('로그인이 필요합니다.');const r=await fetch('/api/notice-refresh',{method:'POST',headers:{Authorization:'Bearer '+auth}});const data=await parseJSON(r);if(!r.ok)throw Error(data.message||'공고 조회 실패')
-    await load();status.textContent='신규 '+data.added+'건 · 변경 '+data.updated+'건 · 기존 '+data.existing+'건 · '+new Date(data.collectedAt).toLocaleString('ko-KR')
+   try{
+    const r=await fetch('/api/bizinfo');const data=await parseJSON(r);if(!r.ok)throw Error(data.message||'공고 조회 실패')
+    let added=0,updated=0,existing=0,failed=0
+    for(const item of data.items||[]){try{const result=await saveSharedNotice(item);if(result==='added')added++;else if(result==='updated')updated++;else existing++}catch{failed++}}
+    if(!failed)await recordNoticeRefresh()
+    await load();status.textContent='신규 '+added+'건 · 변경 '+updated+'건 · 기존 '+existing+'건'+(failed?' · 저장 실패 '+failed+'건':'')+' · '+new Date().toLocaleString('ko-KR')
    }catch(e){
     if(!notices.length){try{const r=await fetch('/api/bizinfo');const data=await parseJSON(r);if(r.ok){notices=data.items||[];redraw()}}catch{}}
     status.textContent='DB 수집·저장 실패: '+e.message+' · 기존 또는 저장되지 않은 공고를 표시합니다.'

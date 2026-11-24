@@ -16,7 +16,7 @@ import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} fro
 import {installMiloSuite} from './milo-suite.js'
 import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -848,7 +848,7 @@ const convertToDocxCopy=(kind)=>{
 }
 const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
 installMiloSuite({
- paper,toast,markDirty,openModal,convertToDocxCopy,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,
+ paper,toast,markDirty,openModal,convertToDocxCopy,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh,
  getUser:user,getToken:token,getModel:()=>selectedModel,
  getProviderKey:()=>sessionKeys[selectedModel]||'',
  setFilename:name=>{$('filename').value=name},

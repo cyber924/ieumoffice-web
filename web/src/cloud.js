@@ -192,3 +192,24 @@ export async function readNotices(){
 export async function readNoticeRefreshTime(){
  requireUser();const snap=await modules.fs.getDoc(modules.fs.doc(db,'miloSyncLocks','bizinfo'));return snap.exists()?snap.data()?.lastCompletedAt?.toDate?.()||null:null
 }
+export function noticeIdentity(item){
+ const url=new URL(item.url),id=url.searchParams.get('pblancId')
+ if(url.protocol!=='https:'||!['bizinfo.go.kr','www.bizinfo.go.kr'].includes(url.hostname)||url.pathname!=='/sii/siia/selectSIIA200Detail.do'||!/^PBLN_[A-Za-z0-9_]+$/.test(id||''))throw new Error('기업마당 공고 주소가 올바르지 않습니다.')
+ const title=String(item.title||'').trim().slice(0,190),content=String(item.content||'').slice(0,1400)
+ if(!title)throw new Error('공고 제목이 없습니다.')
+ return {id,title,content,url:url.toString()}
+}
+export async function saveSharedNotice(item){
+ const uid=requireUser(),record=noticeIdentity(item),{id,title,content,url}=record
+ const ref=modules.fs.doc(db,'miloBizinfoNotices',id);checkUser(uid)
+ const result=await modules.fs.runTransaction(db,async tx=>{
+  const current=await tx.get(ref),old=current.exists()?current.data():null
+  if(old&&old.title===title&&old.content===content&&old.url===url)return 'existing'
+  tx.set(ref,{title,content,url,updatedAt:modules.fs.serverTimestamp()})
+  return old?'updated':'added'
+ });checkUser(uid);return result
+}
+export async function recordNoticeRefresh(){
+ const uid=requireUser(),ref=modules.fs.doc(db,'miloSyncLocks','bizinfo');checkUser(uid)
+ await modules.fs.setDoc(ref,{lastCompletedAt:modules.fs.serverTimestamp()});checkUser(uid)
+}

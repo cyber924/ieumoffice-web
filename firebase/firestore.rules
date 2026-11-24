@@ -122,14 +122,27 @@ service cloud.firestore {
         && request.resource.data.updatedAt is timestamp;
       allow delete: if owner(userId);
     }
-    // Only trusted server credentials can write shared notices and locks.
+    // Shared notices: signed-in users may save only constrained Bizinfo records.
     match /miloBizinfoNotices/{noticeId} {
       allow read: if request.auth != null;
-      allow write: if false;
+      allow create, update: if request.auth != null
+        && noticeId.matches('^PBLN_[A-Za-z0-9_]+$')
+        && request.resource.data.keys().hasOnly(['title','content','url','updatedAt'])
+        && request.resource.data.keys().hasAll(['title','content','url','updatedAt'])
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 190
+        && request.resource.data.content is string && request.resource.data.content.size() <= 1400
+        && request.resource.data.url is string && request.resource.data.url.size() <= 2000
+        && request.resource.data.url.matches('^https://(www[.])?bizinfo[.]go[.]kr/sii/siia/selectSIIA200Detail[.]do[?]([^#]*&)?pblancId=' + noticeId + '(&.*)?$')
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
     match /miloSyncLocks/{lockId} {
       allow read: if request.auth != null;
-      allow write: if false;
+      allow create, update: if request.auth != null && lockId == 'bizinfo'
+        && request.resource.data.keys().hasOnly(['lastCompletedAt'])
+        && request.resource.data.keys().hasAll(['lastCompletedAt'])
+        && request.resource.data.lastCompletedAt == request.time;
+      allow delete: if false;
     }
 
   }
