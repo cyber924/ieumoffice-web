@@ -103,3 +103,7 @@ body.show-ruler .paper-wrap::before{content:'0　　　2　　　4　　　6　�
  .paper.show-ai-blanks [data-ai-blank="true"]{outline:0!important;background:transparent!important}
  .coordinate-toolbar{display:none!important}
 }
+
+/* Compact report defaults entry next to AI settings */
+#reportProfileOpen{font-size:11px;padding:6px 10px;border:1px solid #dce5f3;border-radius:7px;background:#fff;color:#41557a;white-space:nowrap}
+#reportProfileOpen:hover{background:#f0f4ff;border-color:#9bb5f4}
