@@ -53,7 +53,7 @@ test('Applying design keeps table structure and creates separate numbered paragr
  const xml=await zip.file('word/document.xml').async('string')
  assert.match(xml,/<w:tbl>/)
  assert.match(xml,/품질 검증 추진/)
- assert.match(xml,/<w:gridSpan/)
+ assert.match(xml,/<w:vMerge/)
 })
 test('Template structure remains identical when values in right-side cells change',()=>{
  const paper=make('<h1>품의서</h1><table><tr><th>작성일</th><td></td></tr><tr><th>부서</th><td></td></tr><tr><th>담당자</th><td></td></tr></table>')
