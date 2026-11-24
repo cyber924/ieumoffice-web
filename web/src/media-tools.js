@@ -96,11 +96,14 @@ export function installMediaTools({paper,isImported,convertToDocxCopy,markDirty,
   const s=window.getSelection();s.removeAllRanges();s.addRange(savedRange.cloneRange())
   return true
  }
- const caret=(node)=>{
+ const caret=node=>{
+  // No previous caret: append a safe paragraph instead of placing content
+  // inside the final table row or breaking an imported table.
+  const block=document.createElement('p')
+  block.append(node)
+  paper.append(block)
   const r=document.createRange()
-  if(paper.lastChild){r.selectNodeContents(paper.lastChild);r.collapse(false)}
-  else {r.selectNodeContents(paper);r.collapse(false)}
-  r.insertNode(node);r.setStartAfter(node);r.collapse(true)
+  r.setStartAfter(node);r.collapse(true)
   const s=window.getSelection();s.removeAllRanges();s.addRange(r)
   capture()
  }
