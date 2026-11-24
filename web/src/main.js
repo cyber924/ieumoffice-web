@@ -4,6 +4,7 @@ import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
 import {captureTableTargets,validateTableEdits,applyTableEdits,inferTableValues} from './table-ai.js'
 import {captureBusinessReport,isReportFillRequest,proposeBusinessReport,reportMissingFields} from './business-report.js'
+import {annotateCoordinates,semanticSnapshot,splitSemanticBatches,isSemanticFillIntent} from './document-map.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
 import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed} from './cloud.js'
 
@@ -22,6 +23,9 @@ let recentSelection=''
 let pendingProposal=''
 let pendingTableEdits=[]
 let pendingTableSnapshot=null
+let showCoordinates=false
+let showBlankTargets=false
+let mapTimer
 let lastFocusedCell=null
 let dirty=false
 let toastTimer
@@ -31,6 +35,15 @@ function setStatus(message){$('saveStatus').textContent=message}
 function setNotice(message){$('noticeBar').textContent=message}
 function fileName(){return $('filename').value.trim()||'제목 없는 문서'}
 function updateWords(){$('wordCount').textContent=(paper.innerText||'').length+'자'}
+function refreshDocumentMap(){
+  const mapped=annotateCoordinates(paper,{show:showCoordinates,highlight:showBlankTargets})
+  const info=$('coordinateInfo')
+  if(info)info.textContent='표 '+mapped.tables.length+'개 · 빈 셀 '+mapped.blankCells.length+'개'
+}
+function scheduleDocumentMap(){
+  clearTimeout(mapTimer)
+  mapTimer=setTimeout(refreshDocumentMap,180)
+}
 function updateMode(){
   const mode=state?.type||'docx'
   $('filetype').textContent=mode.toUpperCase()
@@ -46,11 +59,11 @@ function restoreDraft(){
     const value=JSON.parse(localStorage.getItem('milosoft-draft-v2')||'null')
     if(value?.html && !value.source){paper.innerHTML=value.html;$('filename').value=value.name||'제목 없는 문서';setStatus('이 브라우저에 저장된 임시 문서를 복원했습니다.')}
   }catch{}
-  updateWords();updateMode()
+  updateWords();updateMode();scheduleDocumentMap()
 }
 let saveTimer
 function markDirty(){
-  dirty=true;updateWords();setStatus('문서 수정됨 · 로컬 임시 저장')
+  dirty=true;updateWords();scheduleDocumentMap();setStatus('문서 수정됨 · 로컬 임시 저장')
   clearTimeout(saveTimer)
   saveTimer=setTimeout(()=>{
     if(state){setStatus('원본 기반 문서 수정 중 · 파일로 저장해 주세요.');return}
@@ -113,7 +126,7 @@ $('newDocument').onclick=()=>{
   state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[]
   paper.innerHTML=initial;$('filename').value='제목 없는 문서'
   delete paper.dataset.orientation;delete paper.dataset.margin
-  localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();setStatus('새 문서 준비 완료')
+  localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();scheduleDocumentMap();setStatus('새 문서 준비 완료')
 }
 function download(blob,name){
   const url=URL.createObjectURL(blob)
@@ -151,7 +164,7 @@ async function loadFile(file){
     }catch(e){setStatus('파일 열기 실패');return toast(e.message)}
   }
   cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
-  dirty=false;updateMode();updateWords();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
+  dirty=false;updateMode();updateWords();refreshDocumentMap();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
   toast('파일을 열었습니다. 복잡한 서식은 저장 후 확인하세요.')
 }
 $('fileInput').onchange=async e=>{
@@ -179,7 +192,7 @@ $('templates').onclick=()=>{
       if(dirty&&!confirm('현재 문서를 새 양식으로 교체할까요?'))return
       state=null;cloudId=null;referenceDocuments=[]
       paper.innerHTML='<h1>'+name+'</h1><table><tbody>'+rows.map((r,i)=>'<tr><th>'+r+'</th><td><br></td></tr>').join('')+'</tbody></table><p><br></p>'
-      $('filename').value=name;updateMode();markDirty();$('modal').close()
+      $('filename').value=name;updateMode();markDirty();refreshDocumentMap();$('modal').close()
     }
     $('templateList').append(btn)
   }
@@ -204,10 +217,14 @@ $('aiForm').onsubmit=async e=>{
   // Only explicitly selected, authenticated user's documents become AI context.
   const selectedReferences=referenceSnapshot.slice(0,3)
   const referenceText=selectedReferences.map(r=>'[참고 문서: '+r.name+']\n'+r.text).join('\n\n')
+  // The dedicated six-field report engine is preserved; other forms use
+  // semantic cell coordinates and a combined user-approved preview.
   const report=isReportFillRequest(prompt)?captureBusinessReport(paper):null
   const reportMode=Boolean(report?.recognized)
-  const tableIntent=reportMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
-  const snapshot=reportMode?report:(tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null)
+  const semanticMode=!reportMode&&isSemanticFillIntent(prompt)
+  const tableIntent=reportMode||semanticMode||/표|셀|양식|칸|작성자|작성일|제목|항목|빈칸|채워|기입|입력|반영/.test(prompt)
+  refreshDocumentMap()
+  const snapshot=reportMode?report:(semanticMode?semanticSnapshot(paper,{prompt,maxTargets:96}):(tableIntent?captureTableTargets(paper,getCell(),{prompt,maxTargets:100}):null))
   const requestedTableFill=tableIntent && snapshot?.targets.some(t=>!t.current)
   pendingTableSnapshot=requestedTableFill?snapshot:null
   pendingTableEdits=[]
@@ -227,6 +244,50 @@ $('aiForm').onsubmit=async e=>{
       $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
       addMessage('assistant',pendingTableEdits.length+'개 표 셀을 지정 좌표로 확인했습니다. 미리보기를 확인하고 적용하세요.')
       $('aiPreview').hidden=false
+      return
+    }
+    if(semanticMode&&requestedTableFill){
+      const candidates=snapshot.targets
+      const chunks=splitSemanticBatches(candidates,24)
+      const suggested=[]
+      const errors=[]
+      for(let index=0;index<chunks.length;index++){
+        $('aiStatus').textContent='양식 분석 및 작성 '+(index+1)+'/'+chunks.length
+        try{
+          const response=await fetch('/api/ai',{method:'POST',
+            headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
+            body:JSON.stringify({
+              model:selectedModel,mode:'semantic',prompt,
+              selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),
+              providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
+            })})
+          const data=await response.json()
+          if(!response.ok)throw new Error(data.error||'AI 요청 실패')
+          if(Array.isArray(data.edits))suggested.push(...data.edits)
+        }catch(error){
+          errors.push('묶음 '+(index+1)+': '+error.message)
+          // If all provider calls fail, do not claim a successful generation.
+          if(errors.length===chunks.length)break
+        }
+      }
+      const protectedIds=new Set(directEdits.map(e=>e.cellId))
+      const proposals=[...directEdits,...suggested.filter(e=>!protectedIds.has(e.cellId))]
+      pendingTableEdits=validateTableEdits(snapshot,proposals)
+      pendingProposal=''
+      const remaining=Math.max(0,snapshot.totalAvailable-pendingTableEdits.length)
+      const warnings=[
+        snapshot.excluded?'이번 요청의 처리 범위를 넘어 제외한 빈 셀 '+snapshot.excluded+'개':'',
+        errors.length?'일부 AI 요청 실패 ('+errors.length+'/'+chunks.length+')':'',
+        remaining?'입력되지 않는 셀 '+remaining+'개는 내용 검토 또는 추가 요청이 필요합니다.':''
+      ].filter(Boolean)
+      const entries=pendingTableEdits.map(e=>e.label+' ['+(snapshot.targets.find(t=>t.cellId===e.cellId)?.address||e.cellId)+']\n  → '+e.value)
+      $('aiPreviewText').textContent=(entries.join('\n\n')||'자동 입력 가능한 내용이 없습니다.')+
+        (warnings.length?'\n\n'+warnings.join('\n'):'')
+      $('aiPreview').hidden=false
+      $('aiApply').textContent=pendingTableEdits.length+'개 셀 일괄 적용'
+      $('aiApply').disabled=pendingTableEdits.length===0
+      addMessage('assistant',pendingTableEdits.length+'개 입력안을 준비했어. 빈칸과 기존 값은 보호하고, 미리보기에서 확인한 뒤 한 번에 적용해 줘.'+
+        (warnings.length?' '+warnings.join(' '):''))
       return
     }
     const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,7500)).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
@@ -290,7 +351,7 @@ $('aiApply').onclick=()=>{
     const applied=applyTableEdits(pendingTableEdits)
     pendingTableEdits=[];pendingTableSnapshot=null;pendingProposal=''
     $('aiPreview').hidden=true
-    if(applied){markDirty();toast('표 '+applied+'개 셀에 적용했습니다. 저장하여 확인하세요.')}
+    if(applied){markDirty();refreshDocumentMap();toast('표 '+applied+'개 셀에 적용했습니다. 저장하여 확인하세요.')}
     else toast('표가 수정되어 적용하지 않았습니다. 다시 AI에게 요청하세요.')
     return
   }
@@ -676,4 +737,24 @@ for(const [caption,message,local] of [
 }
 const modelRow=document.querySelector('.models')
 modelRow?.after(quickPanel)
+const coordinateBar=document.createElement('div')
+coordinateBar.className='coordinate-toolbar'
+coordinateBar.innerHTML='<button type="button" id="coordinateToggle" aria-pressed="false">표 좌표 보기</button>'+
+  '<button type="button" id="blankToggle" aria-pressed="false">AI 입력칸 표시</button>'+
+  '<span id="coordinateInfo" aria-live="polite"></span>'
+document.querySelector('.milosoft-ribbon')?.append(coordinateBar)
+$('coordinateToggle').onclick=()=>{
+  showCoordinates=!showCoordinates
+  $('coordinateToggle').setAttribute('aria-pressed',String(showCoordinates))
+  $('coordinateToggle').classList.toggle('selected',showCoordinates)
+  refreshDocumentMap()
+}
+$('blankToggle').onclick=()=>{
+  showBlankTargets=!showBlankTargets
+  $('blankToggle').setAttribute('aria-pressed',String(showBlankTargets))
+  $('blankToggle').classList.toggle('selected',showBlankTargets)
+  refreshDocumentMap()
+}
+refreshDocumentMap()
+
 
