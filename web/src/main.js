@@ -1,5 +1,6 @@
 import './styles.css'
 import {markdownToDocumentHtml} from './document-markdown.js'
+import {exportHwpx} from './hwpx-export.js'
 import {installMediaTools} from './media-tools.js'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
@@ -186,6 +187,15 @@ $('fileInput').onchange=async e=>{
   if(!file)return
   if(dirty&&!confirm('현재 수정 중인 문서를 저장했나요? 다른 파일을 열면 편집 내용이 사라집니다.')){e.target.value='';return}
   await loadFile(file);e.target.value=''
+}
+$('saveHwpx').onclick=async()=>{
+  const button=$('saveHwpx');button.disabled=true;setStatus('HWPX 문서 생성 중…')
+  try{
+    const blob=state?.type==='hwpx'?await savePackage(state,paper):await exportHwpx(paper)
+    download(blob,safeFilename(fileName(),'hwpx'))
+    setStatus('HWPX 다운로드 완료 · 한글에서 서식을 확인해 주세요.')
+    toast('HWPX 파일을 저장했습니다. 복잡한 서식은 한글에서 확인하세요.')
+  }catch(e){setStatus('HWPX 저장 실패');toast(e.message)}finally{button.disabled=false}
 }
 $('saveText').onclick=()=>{
   const value=(paper.innerText||paper.textContent||'').replace(/\r?\n/g,'\r\n')
