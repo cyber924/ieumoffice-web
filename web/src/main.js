@@ -1,4 +1,5 @@
 import './styles.css'
+import {markdownToDocumentHtml} from './document-markdown.js'
 import {installMediaTools} from './media-tools.js'
 import {exportNewDocx,validateDocxTables} from './docx-export.js'
 import {installRibbon} from './editor-pro.js'
@@ -185,6 +186,11 @@ $('fileInput').onchange=async e=>{
   if(!file)return
   if(dirty&&!confirm('현재 수정 중인 문서를 저장했나요? 다른 파일을 열면 편집 내용이 사라집니다.')){e.target.value='';return}
   await loadFile(file);e.target.value=''
+}
+$('saveText').onclick=()=>{
+  const value=(paper.innerText||paper.textContent||'').replace(/\r?\n/g,'\r\n')
+  download(new Blob(['\ufeff',value],{type:'text/plain;charset=utf-8'}),safeFilename(fileName(),'txt'))
+  toast('TXT 파일을 다운로드했습니다. 표와 서식은 텍스트로 저장됩니다.')
 }
 $('printDoc').onclick=()=>window.print()
 function openModal(html){$('modalContent').innerHTML=html;$('modal').showModal()}
@@ -445,11 +451,11 @@ $('aiApply').onclick=()=>{
   }
   if(!pendingProposal)return toast('적용할 수정안이 없습니다.')
   if(state)return toast('원본 DOCX/HWPX의 표 외 텍스트 자동 삽입은 제한됩니다.')
-  const text=pendingProposal
-  paper.focus()
+  const html=markdownToDocumentHtml(pendingProposal)
   const selection=window.getSelection()
-  if(selection?.rangeCount && paper.contains(selection.anchorNode))document.execCommand('insertText',false,text)
-  else{const p=document.createElement('p');p.textContent=text;paper.append(p)}
+  const inside=selection?.rangeCount && paper.contains(selection.anchorNode) && paper.contains(selection.focusNode)
+  if(inside){paper.focus();document.execCommand('insertHTML',false,html)}
+  else paper.insertAdjacentHTML('beforeend',html)
   $('aiPreview').hidden=true;pendingProposal='';markDirty();toast('제안을 문서에 적용했습니다.')
 }
 async function loginDialog(){
