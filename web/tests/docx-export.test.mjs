@@ -50,3 +50,8 @@ test('center-aligned table cell retains its image in DOCX',async()=>{
 test('unsupported images fail rather than silently disappear',async()=>{
  await assert.rejects(exportNewDocx(fixture('<p><img src="https://example.invalid/image.png"></p>')),/그림을 Word에 저장할 수 없습니다/)
 })
+test('explicit column widths and row height survive DOCX export',async()=>{
+ const paper=fixture('<table><colgroup><col style="width:30%"><col style="width:70%"></colgroup><tr style="height:40px"><td>항목</td><td>내용</td></tr></table>')
+ const blob=await exportNewDocx(paper),zip=await JSZip.loadAsync(await blob.arrayBuffer()),xml=await zip.file('word/document.xml').async('string')
+ assert.match(xml,/<w:gridCol w:w="2700"\/>/);assert.match(xml,/<w:gridCol w:w="6300"\/>/);assert.match(xml,/<w:trHeight w:val="600" w:hRule="atLeast"\/>/)
+})
