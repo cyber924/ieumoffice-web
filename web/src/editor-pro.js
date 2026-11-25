@@ -22,7 +22,8 @@ const ribbon = {
   ],
   '표': [
     ['표 삽입','insertTable'],['행 추가','addRow'],['열 추가','addColumn'],['행 삭제','deleteRow'],['열 삭제','deleteColumn'],
-    ['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 가운데','centerCell'],['표 가운데 배치','centerTable'],['셀 배경','cellBackground'],['테두리색','borderColor']
+    ['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 가운데','centerCell'],['표 가운데 배치','centerTable'],['셀 배경','cellBackground'],['테두리색','borderColor'],
+    ['열 너비','columnWidth'],['행 높이','rowHeight'],['셀 여백','cellPadding'],['셀 세로 정렬','cellVertical'],['테두리 굵기','borderWidth'],['열 균등','distributeColumns'],['행 균등','distributeRows'],['페이지 폭에 맞춤','fitTable'],['표 변경 취소','undoTable']
   ],
   '도구': [
     ['문서 검사','inspect'],['맞춤법 검사','spell'],['버전 비교','compare'],['AI 참고 검색','searchAI'],['문서 찾기','myDocuments']
@@ -33,7 +34,7 @@ const ribbon = {
     ['기업 프로필','miloProfile'],['PDF 양식 인식','miloPdf']
   ]
 }
-const needsNew = new Set(['today','hr','link','box','font','size','color','highlight','lineHeight','right','justify','heading','bullets','numbers','landscape','portrait','marginNormal','marginNarrow','deleteRow','deleteColumn','splitCell','cellBackground','borderColor','marks'])
+const needsNew = new Set(['today','hr','link','box','font','size','color','highlight','lineHeight','right','justify','heading','bullets','numbers','landscape','portrait','marginNormal','marginNarrow','deleteRow','deleteColumn','splitCell','cellBackground','borderColor','marks','columnWidth','rowHeight','cellPadding','cellVertical','borderWidth','distributeColumns','distributeRows','fitTable','undoTable'])
 const htmlEsc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,compare,searchAI}) {
   const quick=document.querySelector('.toolbar')
@@ -133,6 +134,65 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     for(let i=1;i<span;i++){const created=document.createElement(c.tagName.toLowerCase());created.innerHTML='<br>';c.after(created)}
     markDirty()
   }
+  let tableUndo=null
+  function rememberTable(t){tableUndo={table:t,html:t.outerHTML}}
+  function simpleTable(t){return t&&!Array.from(t.querySelectorAll('td,th')).some(c=>c.colSpan>1||c.rowSpan>1)}
+  function prepareColumns(t){
+    const count=t.rows[0]?.cells.length||0
+    if(!count||!simpleTable(t)||Array.from(t.rows).some(r=>r.cells.length!==count))return null
+    let group=t.querySelector(':scope > colgroup')
+    const widths=Array.from(t.rows[0].cells,c=>Math.max(28,c.getBoundingClientRect().width))
+    if(!group||group.children.length!==count){group?.remove();group=document.createElement('colgroup');for(const w of widths){const col=document.createElement('col');col.style.width=w+'px';group.append(col)}t.prepend(group)}
+    t.style.width=Math.round(widths.reduce((a,b)=>a+b,0))+'px';t.style.tableLayout='fixed'
+    return Array.from(group.children)
+  }
+  function numberInput(label,initial,min,max){const v=prompt(label,String(Math.round(initial)));if(v===null)return null;const n=Number(v);if(!Number.isFinite(n)||n<min||n>max){toast(min+'~'+max+' 사이의 숫자를 입력해 주세요.');return null}return n}
+  function tableAction(id){
+    const c=cell(),t=table();if(!c||!t)return toast('표 안의 셀을 선택해 주세요.')
+    if(id==='undoTable'){if(!tableUndo?.table?.isConnected)return toast('되돌릴 표 변경이 없습니다.');const old=tableUndo.table;old.outerHTML=tableUndo.html;tableUndo=null;markDirty();return toast('마지막 표 크기 변경을 되돌렸습니다.')}
+    if((id==='columnWidth'||id==='distributeColumns')&&!simpleTable(t))return toast('병합 셀이 없는 표에서 열 너비를 조절할 수 있습니다.')
+    if(id==='columnWidth'){
+      const value=numberInput('선택한 열 너비 (px)',c.getBoundingClientRect().width,28,1000);if(value===null)return
+      rememberTable(t);const cols=prepareColumns(t);if(!cols){tableUndo=null;return toast('열 구조를 확인해 주세요.')}
+      cols[c.cellIndex].style.width=value+'px';t.style.width=Array.from(cols).reduce((a,col)=>a+parseFloat(col.style.width),0)+'px'
+    }else if(id==='rowHeight'){
+      const row=c.closest('tr'),value=numberInput('선택한 행 높이 (px)',row.getBoundingClientRect().height,18,1000);if(value===null)return
+      rememberTable(t);row.style.height=value+'px'
+    }else if(id==='cellPadding'){
+      const value=numberInput('선택한 셀 안쪽 여백 (px)',parseFloat(getComputedStyle(c).paddingLeft)||0,0,100);if(value===null)return
+      rememberTable(t);c.style.padding=value+'px'
+    }else if(id==='cellVertical'){
+      const value=prompt('세로 정렬: 위, 가운데, 아래','가운데');if(value===null)return
+      const alignment={'위':'top','가운데':'middle','아래':'bottom'}[value.trim()];if(!alignment)return toast('위, 가운데, 아래 중 하나를 입력해 주세요.')
+      rememberTable(t);c.style.verticalAlign=alignment
+    }else if(id==='borderWidth'){
+      const value=numberInput('선택한 셀 테두리 굵기 (px)',1,1,10);if(value===null)return
+      rememberTable(t);c.style.borderStyle='solid';c.style.borderWidth=value+'px'
+    }else if(id==='distributeColumns'){
+      rememberTable(t);const cols=prepareColumns(t);if(!cols){tableUndo=null;return toast('열 구조를 확인해 주세요.')}
+      const width=t.getBoundingClientRect().width/cols.length;for(const col of cols)col.style.width=width+'px'
+    }else if(id==='distributeRows'){
+      rememberTable(t);const rows=Array.from(t.rows),height=t.getBoundingClientRect().height/rows.length;for(const row of rows)row.style.height=height+'px'
+    }else if(id==='fitTable'){
+      rememberTable(t);t.style.width='100%';const group=t.querySelector(':scope > colgroup');if(group){const cols=Array.from(group.children),sizes=cols.map(c=>parseFloat(c.style.width)||1),sum=sizes.reduce((a,b)=>a+b,0);cols.forEach((c,i)=>c.style.width=(sizes[i]/sum*100)+'%')}
+    }
+    markDirty();toast('표 크기와 간격을 변경했습니다.')
+  }
+  let drag=null
+  paper.addEventListener('pointerdown',event=>{
+    if(isImported()||event.button!==0)return
+    const c=event.target.closest?.('td,th');if(!c||!paper.contains(c))return
+    const t=c.closest('table'),rect=c.getBoundingClientRect(),nearRight=Math.abs(event.clientX-rect.right)<5,nearBottom=Math.abs(event.clientY-rect.bottom)<5
+    if(!nearRight&&!nearBottom)return
+    if(nearRight&&!simpleTable(t))return
+    rememberTable(t)
+    if(nearRight){const cols=prepareColumns(t);if(!cols){tableUndo=null;return}drag={kind:'column',table:t,cols,index:c.cellIndex,start:event.clientX,original:parseFloat(cols[c.cellIndex].style.width),total:parseFloat(t.style.width)}}
+    else{const row=c.closest('tr');drag={kind:'row',row,start:event.clientY,original:row.getBoundingClientRect().height}}
+    event.preventDefault();paper.setPointerCapture(event.pointerId)
+  })
+  paper.addEventListener('pointermove',event=>{if(!drag)return;if(drag.kind==='column'){const width=Math.max(28,drag.original+event.clientX-drag.start);drag.cols[drag.index].style.width=width+'px';drag.table.style.width=(drag.total+width-drag.original)+'px'}else drag.row.style.height=Math.max(18,drag.original+event.clientY-drag.start)+'px';event.preventDefault()})
+  paper.addEventListener('pointerup',()=>{if(drag){drag=null;markDirty()}})
+  paper.addEventListener('pointercancel',()=>{if(drag){drag=null;markDirty()}})
   const hexRegex=/^#[0-9A-Fa-f]{6}$/
   function styleCell(key,label){
     const c=cell();if(!c)return toast('표 안의 셀을 선택해 주세요.')
@@ -249,6 +309,7 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
         target.dataset.centerTable='true'
         markDirty();toast('표를 가운데 배치했습니다.');break
       }
+      case 'columnWidth':case 'rowHeight':case 'cellPadding':case 'cellVertical':case 'borderWidth':case 'distributeColumns':case 'distributeRows':case 'fitTable':case 'undoTable':tableAction(id);break
       case 'cellBackground':styleCell('backgroundColor','셀 배경색 (#RRGGBB)');break
       case 'borderColor':styleCell('borderColor','테두리색 (#RRGGBB)');break
       case 'inspect':inspect();break
