@@ -111,10 +111,29 @@ export function extractLabeledValues(prompt,{today='',profile={}}={}){
  if(!result.has('author')&&(profile?.assignee||profile?.author))result.set('author',profile.assignee||profile.author);
  return result;
 }
+// Interpret a stated total independently from ordinary item amounts.
+function requestedTotal(prompt){
+ const m=String(prompt||'').match(/(?:총\s*(?:견적\s*)?금액|견적\s*총액|총액|합계)\s*(?:은|는|이|가|:|=)?\s*([0-9,]+(?:\.\d+)?\s*(?:천만원|백만원|십만원|억원|만원|천원|원)?|[일이삼사오육칠팔구십백천만억]+\s*원?)/)
+ if(!m)return null
+ const raw=m[1].replace(/[,\s]/g,'').replace(/원$/,'')
+ let value=0
+ if(/^\d/.test(raw)){
+  const n=parseFloat(raw);value=n*(raw.includes('천만')?10000000:raw.includes('백만')?1000000:raw.includes('십만')?100000:raw.includes('억')?100000000:raw.includes('만')?10000:raw.includes('천')?1000:1)
+ }else{
+  const digits={일:1,이:2,삼:3,사:4,오:5,육:6,칠:7,팔:8,구:9},units={십:10,백:100,천:1000}
+  let section=0,n=0
+  for(const ch of raw){if(digits[ch])n=digits[ch];else if(units[ch]){section+=(n||1)*units[ch];n=0}else if(ch==='만'||ch==='억'){value+=(section+n||1)*(ch==='억'?100000000:10000);section=0;n=0}else return null}
+  value+=section+n
+ }
+ return Number.isSafeInteger(value)&&value>0?value.toLocaleString('ko-KR')+'원':null
+}
 export function proposeLabeledForm(snapshot,prompt,options={}){
  if(!snapshot?.recognized)return [];
  const values=extractLabeledValues(prompt,options);
- return snapshot.targets.filter(t=>values.has(t.fieldKey)).map(t=>({cellId:t.cellId,value:values.get(t.fieldKey),source:'사용자 제공 정보'}));
+ const edits=snapshot.targets.filter(t=>values.has(t.fieldKey)).map(t=>({cellId:t.cellId,value:values.get(t.fieldKey),source:'사용자 제공 정보'}));
+ const total=requestedTotal(prompt);
+ if(total)for(const t of snapshot.targets){if(/^(?:합계|총액|총금액|견적총액|총견적금액)$/.test(norm(t.label))&&!edits.some(e=>e.cellId===t.cellId))edits.push({cellId:t.cellId,value:total,source:'사용자 제공 정보'});}
+ return edits;
 }
 export function formRemaining(snapshot,edits){
  const set=new Set((edits||[]).map(e=>e.cellId));
