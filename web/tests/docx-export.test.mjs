@@ -41,3 +41,17 @@ test('new-document A4 page and Korean text survive zip',async()=>{
  assert.equal((xml.match(/<w:tbl>/g)||[]).length,1)
  assert.ok(blob.size>1000)
 })
+test('center-aligned table cell retains its image in DOCX',async()=>{
+ const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lFZ0AAAAASUVORK5CYII='
+ const paper=fixture('<table><tr><td style="text-align:center"><p>사진</p><img src="data:image/png;base64,'+png+'" width="100" height="100"></td></tr></table>')
+ const blob=await exportNewDocx(paper),zip=await JSZip.loadAsync(await blob.arrayBuffer()),xml=await zip.file('word/document.xml').async('string')
+ assert.match(xml,/<w:drawing>/);assert.ok(zip.file('word/media/image1.png'))
+})
+test('unsupported images fail rather than silently disappear',async()=>{
+ await assert.rejects(exportNewDocx(fixture('<p><img src="https://example.invalid/image.png"></p>')),/그림을 Word에 저장할 수 없습니다/)
+})
+test('explicit column widths and row height survive DOCX export',async()=>{
+ const paper=fixture('<table><colgroup><col style="width:30%"><col style="width:70%"></colgroup><tr style="height:40px"><td>항목</td><td>내용</td></tr></table>')
+ const blob=await exportNewDocx(paper),zip=await JSZip.loadAsync(await blob.arrayBuffer()),xml=await zip.file('word/document.xml').async('string')
+ assert.match(xml,/<w:gridCol w:w="2700"\/>/);assert.match(xml,/<w:gridCol w:w="6300"\/>/);assert.match(xml,/<w:trHeight w:val="600" w:hRule="atLeast"\/>/)
+})

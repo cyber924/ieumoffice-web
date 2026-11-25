@@ -1,4 +1,6 @@
 import './styles.css'
+import {inspectDocument,compareDocumentText} from './document-review.js'
+import {selectedEdits,canRestoreAI} from './ai-review.js'
 import {DEFAULT_TEMPLATES,cleanTemplate,filterTemplates,ADMIN_EMAIL} from './template-library.js'
 import {markdownToDocumentHtml} from './document-markdown.js'
 import {exportHwpx} from './hwpx-export.js'
@@ -43,6 +45,8 @@ let showBlankTargets=false
 let mapTimer
 let lastFocusedCell=null
 let dirty=false
+let editRevision=0
+let aiUndoSnapshot=null
 let toastTimer
 
 function toast(message){const el=$('toast');el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,4300)}
@@ -78,7 +82,7 @@ function restoreDraft(){
 }
 let saveTimer
 function markDirty(){
-  dirty=true;updateWords();scheduleDocumentMap();setStatus('문서 수정됨 · 로컬 임시 저장')
+  editRevision++;dirty=true;updateWords();scheduleDocumentMap();setStatus('문서 수정됨 · 로컬 임시 저장')
   clearTimeout(saveTimer)
   saveTimer=setTimeout(()=>{
     if(state){setStatus('원본 기반 문서 수정 중 · 파일로 저장해 주세요.');return}
@@ -105,6 +109,13 @@ paper.addEventListener('input',markDirty)
 paper.addEventListener('mouseup',()=>{recentSelection=String(window.getSelection()?.toString()||'').slice(0,10000)})
 paper.addEventListener('keyup',()=>{recentSelection=String(window.getSelection()?.toString()||'').slice(0,10000)})
 paper.addEventListener('focusin',e=>{if(e.target.closest('td,th'))lastFocusedCell=e.target.closest('td,th')})
+function proposalBlocks(){const template=document.createElement('template');template.innerHTML=markdownToDocumentHtml(pendingProposal);return [...template.content.children]}
+function showAIEditChoices(){
+ const box=$('aiEditChoices');box.replaceChildren()
+ const options=pendingTableEdits.length?pendingTableEdits:pendingProposal?proposalBlocks():[]
+ $('aiApplySelected').hidden=!options.length
+ options.forEach((entry,index)=>{const label=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');input.type='checkbox';input.checked=true;input.value=String(index);text.textContent=pendingTableEdits.length?entry.label+' → '+entry.value:(entry.textContent||entry.tagName).trim().slice(0,180);label.append(input,text);box.append(label)})
+}
 function getCell(){
   const s=window.getSelection()
   const node=s?.anchorNode
@@ -138,7 +149,7 @@ $('mergeCells').onclick=()=>{
 }
 $('newDocument').onclick=()=>{
   if(dirty&&!confirm('새 문서를 만들까요? 저장하지 않은 현재 변경 내용은 사라질 수 있습니다.'))return
-  state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[]
+  state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[];aiUndoSnapshot=null;$('aiUndo').hidden=true
   paper.innerHTML=initial;$('filename').value='제목 없는 문서'
   delete paper.dataset.orientation;delete paper.dataset.margin
   activeRememberedTemplate=null
@@ -179,7 +190,7 @@ async function loadFile(file){
       state=parsed;paper.innerHTML=parsed.html
     }catch(e){setStatus('파일 열기 실패');return toast(e.message)}
   }
-  cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
+  aiUndoSnapshot=null;$('aiUndo').hidden=true;cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
   dirty=false;updateMode();updateWords();refreshDocumentMap();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
   void restoreRememberedTemplate()
   toast('파일을 열었습니다. 복잡한 서식은 저장 후 확인하세요.')
@@ -311,7 +322,7 @@ $('aiForm').onsubmit=async e=>{
       $('aiPreviewText').textContent=preview||'유효한 빈 셀을 찾지 못했습니다.'
       $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
       addMessage('assistant',pendingTableEdits.length+'개 표 셀을 지정 좌표로 확인했습니다. 미리보기를 확인하고 적용하세요.')
-      $('aiPreview').hidden=false
+      $('aiPreview').hidden=false;showAIEditChoices()
       return
     }
     if(genericFormMode&&requestedTableFill){
@@ -357,7 +368,7 @@ $('aiForm').onsubmit=async e=>{
         (errors.length?'\n\nAI 요청 오류: '+errors.join(' / '):'')
       $('aiApply').textContent='양식 '+pendingTableEdits.length+'개 셀 일괄 적용'
       $('aiApply').disabled=pendingTableEdits.length===0
-      $('aiPreview').hidden=false
+      $('aiPreview').hidden=false;showAIEditChoices()
       addMessage('assistant','양식 '+snapshot.targets.length+'개 빈칸을 인식하고 '+pendingTableEdits.length+
         '개 입력안을 준비했어. 예시값 '+exampleCount+'개는 실제 정보로 검토·수정해 줘. 기존 값과 표 구조는 유지하며 승인 시 한 번에 적용해.'+
         (missing.length?' 입력 보류: '+missing.join(' · '):''))
@@ -403,7 +414,7 @@ $('aiForm').onsubmit=async e=>{
       const entries=pendingTableEdits.map(e=>e.label+' ['+(snapshot.targets.find(t=>t.cellId===e.cellId)?.address||e.cellId)+']'+(isUnverifiedDraft(e.source)?' [예시·초안 확인]':' [제공 정보]')+'\n  → '+e.value)
       $('aiPreviewText').textContent=(entries.join('\n\n')||'자동 입력 가능한 내용이 없습니다.')+
         (warnings.length?'\n\n'+warnings.join('\n'):'')
-      $('aiPreview').hidden=false
+      $('aiPreview').hidden=false;showAIEditChoices()
       $('aiApply').textContent=pendingTableEdits.length+'개 셀 일괄 적용'
       $('aiApply').disabled=pendingTableEdits.length===0
       addMessage('assistant',pendingTableEdits.length+'개 입력안을 준비했어. 빈칸과 기존 값은 보호하고, 미리보기에서 확인한 뒤 한 번에 적용해 줘.'+
@@ -455,7 +466,7 @@ $('aiForm').onsubmit=async e=>{
       if(requestedTableFill)pendingProposal=''
       $('aiApply').textContent='문서에 적용'
     }
-    $('aiPreview').hidden=false
+    $('aiPreview').hidden=false;showAIEditChoices()
   }catch(err){
     if(requestedTableFill && (directEdits.length||fillMode==='sample')){
       const completed=completeDraft(snapshot,directEdits,[],completionOptions)
@@ -467,7 +478,7 @@ $('aiForm').onsubmit=async e=>{
         $('aiPreviewText').textContent=preview
         $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
         $('aiApply').disabled=false
-        $('aiPreview').hidden=false
+        $('aiPreview').hidden=false;showAIEditChoices()
         addMessage('assistant','AI 호출 실패로 예시값 또는 사용자 지정값 '+pendingTableEdits.length+'개만 준비했습니다. 실제 정보와 생성된 예시를 반드시 확인 후 적용해 주세요.')
       }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
     }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
@@ -475,29 +486,36 @@ $('aiForm').onsubmit=async e=>{
   finally{$('aiStatus').textContent='AI 연결';$('aiSend').disabled=false}
 }
 $('aiReject').onclick=()=>{$('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null}
-$('aiApply').onclick=()=>{
+function captureAIUndo(before){aiUndoSnapshot={before,revision:editRevision,state};$('aiUndo').hidden=false}
+function applyAIProposal(selectedOnly=false){
   if(pendingTableEdits.length){
-    const reviewCount=pendingTableEdits.filter(x=>isUnverifiedDraft(x.source)).length
-    const applied=applyTableEdits(pendingTableEdits)
-    pendingTableEdits=[];pendingTableSnapshot=null;pendingProposal=''
-    $('aiPreview').hidden=true
+    const chosen=selectedOnly?selectedEdits(pendingTableEdits,[...$('aiEditChoices').querySelectorAll('input:checked')].map(el=>el.value)):pendingTableEdits
+    if(!chosen.length)return toast('적용할 항목을 선택하세요.')
+    const before=paper.innerHTML,reviewCount=chosen.filter(x=>isUnverifiedDraft(x.source)).length
+    const applied=applyTableEdits(chosen)
     if(applied){
-      markDirty();refreshDocumentMap()
-      if(reviewCount){
-        setNotice('예시·AI 초안 '+reviewCount+'개가 포함된 문서입니다. 실제 제출·결재 전에 이름, 금액, 내용 등을 검토하고 수정하세요.')
-      }
-      toast('표 '+applied+'개 셀을 적용했습니다.'+(reviewCount?' 예시·AI 초안 '+reviewCount+'개를 확인해 주세요.':' 저장하여 확인하세요.'))
+      pendingTableEdits=[];pendingTableSnapshot=null;pendingProposal='';$('aiPreview').hidden=true
+      markDirty();refreshDocumentMap();captureAIUndo(before)
+      if(reviewCount)setNotice('예시·AI 초안 '+reviewCount+'개가 포함된 문서입니다. 실제 제출·결재 전에 내용을 확인하세요.')
+      toast('표 '+applied+'개 셀을 적용했습니다.'+(applied<chosen.length?' 변경된 셀은 제외했습니다.':''))
     }else toast('표가 수정되어 적용하지 않았습니다. 다시 AI에게 요청하세요.')
     return
   }
   if(!pendingProposal)return toast('적용할 수정안이 없습니다.')
   if(state)return toast('원본 DOCX/HWPX의 표 외 텍스트 자동 삽입은 제한됩니다.')
-  const html=markdownToDocumentHtml(pendingProposal)
-  const selection=window.getSelection()
-  const inside=selection?.rangeCount && paper.contains(selection.anchorNode) && paper.contains(selection.focusNode)
-  if(inside){paper.focus();document.execCommand('insertHTML',false,html)}
-  else paper.insertAdjacentHTML('beforeend',html)
-  $('aiPreview').hidden=true;pendingProposal='';markDirty();toast('제안을 문서에 적용했습니다.')
+  const blocks=proposalBlocks(),chosen=selectedOnly?selectedEdits(blocks,[...$('aiEditChoices').querySelectorAll('input:checked')].map(el=>el.value)):blocks
+  if(!chosen.length)return toast('적용할 항목을 선택하세요.')
+  const before=paper.innerHTML,html=chosen.map(el=>el.outerHTML).join(''),selection=window.getSelection()
+  const inside=selection?.rangeCount&&paper.contains(selection.anchorNode)&&paper.contains(selection.focusNode)
+  if(inside){paper.focus();document.execCommand('insertHTML',false,html)}else paper.insertAdjacentHTML('beforeend',html)
+  $('aiPreview').hidden=true;pendingProposal='';markDirty();captureAIUndo(before);toast('제안을 문서에 적용했습니다.')
+}
+$('aiApply').onclick=()=>applyAIProposal(false)
+$('aiApplySelected').onclick=()=>applyAIProposal(true)
+$('aiUndo').onclick=()=>{
+ if(!aiUndoSnapshot)return
+ if(!canRestoreAI(aiUndoSnapshot,state,editRevision))return toast('AI 적용 후 문서가 변경되어 되돌리지 않았습니다. 일반 실행 취소를 이용하세요.')
+ paper.innerHTML=aiUndoSnapshot.before;lastFocusedCell=null;aiUndoSnapshot=null;$('aiUndo').hidden=true;markDirty();refreshDocumentMap();toast('AI 적용 전 상태로 되돌렸습니다.')
 }
 async function loginDialog(){
   if(!isCloudReady())return openModal('<h2>로그인 연결 대기</h2><p>Firebase 설정이 아직 등록되지 않았습니다. Vercel 환경 변수(VITE_FIREBASE_*)를 연결하면 이메일 로그인과 클라우드 저장을 사용할 수 있습니다.</p>')
@@ -760,72 +778,21 @@ initCloud(config,u=>{
 restoreDraft()
 
 function documentInspection(){
- const tables=Array.from(paper.querySelectorAll('table'))
- const warnings=[]
- let empty=0,invalidDates=0,missingLabels=0
- for(const [ti,tbl] of tables.entries()){
-  for(const [ri,row] of Array.from(tbl.rows).entries()){
-   const cells=Array.from(row.cells)
-   if(cells.length===2&&ri>0){
-    const label=(cells[0].innerText||'').trim()
-    const val=(cells[1].innerText||'').trim()
-    if(label&&!val){empty++;warnings.push('표 '+(ti+1)+' · '+label+': 내용 없음')}
-    if(/날짜|작성일|보고일|일자/.test(label)&&val&&!/^\d{4}[.\/-]\s*\d{1,2}[.\/-]\s*\d{1,2}/.test(val))invalidDates++
-   }
-  }
- }
- if(paper.innerText.trim().length<10)warnings.push('문서 본문이 거의 비어 있습니다.')
- if(invalidDates)warnings.push('날짜 형식 확인 필요: '+invalidDates+'곳')
- if(state)warnings.push('가져온 문서의 레이아웃은 Word/한컴에서 반드시 재확인하세요.')
- openModal('<h2>문서 검사</h2><p>규칙 기반 점검 결과입니다. 외부 AI로 내용이 전송되지 않습니다.</p><div id="inspectionResults"></div>')
- const box=$('inspectionResults')
- const summary=document.createElement('p')
- summary.textContent='문서 길이: '+paper.innerText.trim().length+'자 · 표: '+tables.length+'개 · 빈 필드: '+empty+'개'
- box.append(summary)
- if(!warnings.length){const p=document.createElement('p');p.textContent='기본 검사에서 발견된 문제가 없습니다.';box.append(p)}
- for(const w of warnings.slice(0,40)){const p=document.createElement('p');p.textContent='• '+w;box.append(p)}
-}
-function diffLines(before,after){
- const a=String(before||'').split(/\r?\n/),b=String(after||'').split(/\r?\n/)
- const max=Math.max(a.length,b.length),items=[]
- for(let i=0;i<max;i++){
-  if((a[i]||'')===(b[i]||''))continue
-  items.push({line:i+1,old:a[i]||'',now:b[i]||''})
-  if(items.length>=60)break
- }
- return {items,oldCount:a.length,newCount:b.length}
+ const result=inspectDocument(paper)
+ openModal('<h2>문서 검사</h2><p>빈 항목과 금액·날짜·서명란을 점검합니다. 결과는 검토 안내이며 사실 여부나 법적 유효성을 판단하지 않습니다.</p><div id="inspectionResults"></div>')
+ const box=$('inspectionResults'),summary=document.createElement('p');summary.textContent='문서 '+result.length+'자 · 표 '+result.tables+'개 · 확인 '+result.issues.length+'곳';box.append(summary)
+ if(!result.issues.length){const p=document.createElement('p');p.textContent='기본 검사에서 발견된 항목이 없습니다.';box.append(p)}
+ for(const issue of result.issues.slice(0,100)){const p=document.createElement('p');p.textContent='['+issue.kind+'] '+issue.location+' — '+issue.detail;box.append(p)}
 }
 async function compareHistory(){
- if(!cloudId)return toast('먼저 클라우드에 저장한 문서를 열어 주세요.')
- if(!user())return loginDialog()
- openModal('<h2>버전 내용 비교</h2><p>이전에 저장한 문서 본문과 현재 편집 중인 내용을 줄 단위로 비교합니다. 표 스타일과 레이아웃의 차이까지 비교하지는 않습니다.</p><div id="historyCompare">이전 버전을 조회 중…</div>')
- try{
-  const versions=await listRevisions(cloudId)
-  if(!versions.length)throw new Error('비교할 저장 버전이 없습니다.')
-  const host=$('historyCompare');if(!host)return
-  host.replaceChildren()
-  const select=document.createElement('select');select.className='field'
-  for(const v of versions){const o=document.createElement('option');o.value=v.id;o.textContent='버전 '+v.revisionNumber+' · '+dateText(v.savedAt);select.append(o)}
-  const button=document.createElement('button');button.textContent='비교하기'
-  const result=document.createElement('div');result.className='compare-diff'
-  button.onclick=async()=>{
-   result.textContent='비교 중…'
-   try{
-    const text=await readCloudIndexed({id:cloudId,revisionId:select.value,textPreview:''})
-    const diff=diffLines(text,paper.innerText)
-    result.replaceChildren()
-    const title=document.createElement('p');title.textContent='변경된 줄 '+diff.items.length+'개 (최대 60줄 표시)';result.append(title)
-    for(const item of diff.items){
-     const row=document.createElement('div')
-     const before=document.createElement('div');before.className='removed';before.textContent='− '+item.line+'행: '+item.old
-     const after=document.createElement('div');after.className='added';after.textContent='+ '+item.line+'행: '+item.now
-     row.append(before,after);result.append(row)
-    }
-    if(!diff.items.length)result.textContent='비교한 범위에서 달라진 줄이 없습니다.'
-   }catch(e){result.textContent='비교 실패: '+e.message}
-  }
-  host.append(select,button,result)
- }catch(e){if($('historyCompare'))$('historyCompare').textContent=e.message}
+ openModal('<h2>문서 비교</h2><p>기존 계약서 파일 또는 저장된 버전과 현재 문서의 텍스트를 비교합니다. 서식·이미지·법적 의미는 비교하지 않습니다.</p><label>기존 파일 선택 <input id="compareFile" type="file" accept=".docx,.hwpx,.txt"></label><div id="compareVersions"></div><div id="historyCompare" class="compare-diff"></div>')
+ $('modal').classList.add('wide-modal')
+ const result=$('historyCompare')
+ const show=text=>{const diff=compareDocumentText(text,paper.innerText);result.replaceChildren();const summary=document.createElement('p');summary.textContent='변경 '+diff.changes.length+'개'+(diff.truncated?' · 일부만 표시':'');result.append(summary)
+  for(const item of diff.changes){const row=document.createElement('div');row.className=item.kind==='추가'?'added':'removed';row.textContent=(item.kind==='추가'?'+ ':'− ')+item.text;result.append(row)}
+  if(!diff.changes.length)result.textContent='비교한 텍스트에 차이가 없습니다.'}
+ $('compareFile').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;result.textContent='비교 문서 읽는 중…';try{let text;if(/\.txt$/i.test(file.name))text=await file.text();else{const parsed=await openPackage(file),container=document.createElement('div');container.innerHTML=parsed.html;document.body.append(container);text=container.innerText;container.remove()}show(text)}catch(err){result.textContent='비교 실패: '+err.message}}
+ if(cloudId&&user())try{const versions=await listRevisions(cloudId),host=$('compareVersions');if(!host)return;const select=document.createElement('select');select.className='field';for(const v of versions){const o=document.createElement('option');o.value=v.id;o.textContent='버전 '+v.revisionNumber+' · '+dateText(v.savedAt);select.append(o)}const button=document.createElement('button');button.textContent='선택 버전과 비교';button.disabled=!versions.length;button.onclick=async()=>{try{show(await readCloudIndexed({id:cloudId,revisionId:select.value,textPreview:''}))}catch(e){result.textContent='비교 실패: '+e.message}};host.append(select,button)}catch(e){result.textContent='버전 조회 실패: '+e.message}
 }
 async function searchReferences(){
  if(!user())return loginDialog()

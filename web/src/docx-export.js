@@ -130,10 +130,26 @@ function tableLayout(table){
  }
  return {rows:out,cols:Math.max(1,max)}
 }
-function cellXml(item,colCount){
+function tableWidths(table,cols){
+ const group=table.querySelector(':scope > colgroup'),nodes=group?Array.from(group.children).filter(n=>local(n)==='col'):[]
+ let sizes=nodes.length===cols?nodes.map(n=>parseFloat(n.style?.width||n.getAttribute('width')||'')):[]
+ if(sizes.length!==cols||sizes.some(n=>!Number.isFinite(n)||n<=0)){
+  const cells=Array.from(table.rows?.[0]?.cells||[])
+  sizes=cells.length===cols&&cells.every(c=>(c.colSpan||1)===1)?cells.map(c=>parseFloat(c.style?.width||c.getAttribute('width')||'')):[]
+ }
+ if(sizes.length!==cols||sizes.some(n=>!Number.isFinite(n)||n<=0))return Array(cols).fill(Math.floor(9000/cols))
+ const total=sizes.reduce((a,b)=>a+b,0);return sizes.map(n=>Math.max(1,Math.round(9000*n/total)))
+}
+function rowHeightTwips(row){
+ const value=String(row?.style?.height||row?.getAttribute('height')||'').trim().toLowerCase()
+ if(!value||value.endsWith('%'))return 0
+ const n=parseFloat(value);if(!Number.isFinite(n)||n<=0)return 0
+ return clamp(Math.round(n*(value.endsWith('pt')?20:value.endsWith('mm')?56.6929:15)),1,31680)
+}
+function cellXml(item,colCount,widths){
  const cell=item.cell
  const span=item.span
- const width=Math.floor(9000*span/colCount)
+ const width=widths?widths.slice(item.col||0,(item.col||0)+span).reduce((a,b)=>a+b,0):Math.floor(9000*span/colCount)
  let pr='<w:tcPr><w:tcW w:w="'+width+'" w:type="dxa"/>'
  if(span>1)pr+='<w:gridSpan w:val="'+span+'"/>'
  if(item.vertical)pr+='<w:vMerge'+(item.vertical==='restart'?' w:val="restart"':'')+'/>'
@@ -141,30 +157,34 @@ function cellXml(item,colCount){
  if(background)pr+='<w:shd w:val="clear" w:fill="'+hex(background,'FFFFFF')+'"/>'
  pr+='</w:tcPr>'
  if(!cell)return '<w:tc>'+pr+'<w:p/></w:tc>'
- const blocks=blockChildren(cell)
- const center=cell.style?.textAlign==='center'
- const content=center?'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'+
-  '<w:r><w:t xml:space="preserve">'+xmlEscape(text(cell))+'</w:t></w:r></w:p>':(blocks||paragraph(cell))
+ // Never flatten centered cells: they may contain images or rich text.
+ const renderCell=cell.style?.textAlign==='center'?cell.cloneNode(true):cell
+ if(renderCell!==cell)for(const child of renderCell.querySelectorAll('p,div,h1,h2,h3,li')){
+  if(child.closest('td,th')===renderCell&&!child.style.textAlign)child.style.textAlign='center'
+ }
+ const blocks=blockChildren(renderCell)
+ const content=blocks||paragraph(renderCell)
  return '<w:tc>'+pr+content+'</w:tc>'
 }
 function tableXml(table){
- const {rows,cols}=tableLayout(table)
+ const {rows,cols}=tableLayout(table),widths=tableWidths(table,cols)
  let xml='<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/>'+
   (table.dataset?.centerTable==='true'?'<w:jc w:val="center"/>':'')+
   '<w:tblLayout w:type="fixed"/><w:tblBorders>'
  for(const edge of ['top','left','bottom','right','insideH','insideV'])xml+='<w:'+edge+' w:val="single" w:sz="6" w:color="8B98A9"/>'
  xml+='</w:tblBorders></w:tblPr><w:tblGrid>'
- for(let i=0;i<cols;i++)xml+='<w:gridCol w:w="'+Math.floor(9000/cols)+'"/>'
+ for(let i=0;i<cols;i++)xml+='<w:gridCol w:w="'+widths[i]+'"/>'
  xml+='</w:tblGrid>'
- for(const placements of rows){
-  xml+='<w:tr>'
+ for(const [rowIndex,placements] of rows.entries()){
+  const height=rowHeightTwips(table.rows[rowIndex])
+  xml+='<w:tr>'+(height?'<w:trPr><w:trHeight w:val="'+height+'" w:hRule="atLeast"/></w:trPr>':'')
   let col=0
   for(const item of placements){
-   while(col<item.col){xml+=cellXml({span:1},cols);col++}
-   xml+=cellXml(item,cols)
+   while(col<item.col){xml+=cellXml({col,span:1},cols,widths);col++}
+   xml+=cellXml(item,cols,widths)
    col=item.col+item.span
   }
-  while(col<cols){xml+=cellXml({span:1},cols);col++}
+  while(col<cols){xml+=cellXml({col,span:1},cols,widths);col++}
   xml+='</w:tr>'
  }
  return xml+'</w:tbl>'
@@ -187,6 +207,7 @@ function blockChildren(parent){
   if(tag==='table'){
    flush();out+=tableXml(node);continue
   }
+  if(tag==='img'){inlineBuffer.push(node);continue}
   if(['p','h1','h2','h3','h4','h5','h6','li'].includes(tag)){
    flush();out+=paragraph(node,{heading:tag==='h1'?1:tag==='h2'?2:0});continue
   }
@@ -236,7 +257,10 @@ export async function exportNewDocx(paper){
  '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
  '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
  '</Relationships>')
- zip.file('word/document.xml',documentXml(paper))
+ const xml=documentXml(paper)
+ const expectedImages=paper.querySelectorAll('img').length
+ if(imageContext.length!==expectedImages)throw new Error('일부 그림을 Word에 저장할 수 없습니다. PNG/JPEG 이미지를 확인해 주세요. (최대 25개)')
+ zip.file('word/document.xml',xml)
  if(imageContext.length){
   const relations=['<?xml version="1.0" encoding="UTF-8"?>',
    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">']
