@@ -123,6 +123,25 @@ service cloud.firestore {
         && request.resource.data.updatedAt is timestamp;
       allow delete: if owner(userId);
     }
+    match /users/{userId}/aiConversations/{conversationId} {
+      allow read: if owner(userId);
+      allow create, update: if owner(userId)
+        && request.resource.data.keys().hasOnly(['title','updatedAt'])
+        && request.resource.data.keys().hasAll(['title','updatedAt'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 120
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+      match /messages/{messageId} {
+        allow read: if owner(userId);
+        allow create, update: if owner(userId)
+          && request.resource.data.keys().hasOnly(['role','text','createdAtMs','sequence'])
+          && request.resource.data.keys().hasAll(['role','text','createdAtMs','sequence'])
+          && request.resource.data.role in ['user','assistant']
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 100000
+          && request.resource.data.createdAtMs is int && request.resource.data.sequence is int;
+        allow delete: if false;
+      }
+    }
     // Private AI prompt catalog. IDs are content hashes to avoid duplicates.
     match /users/{userId}/miloPrompts/{promptId} {
       allow read: if owner(userId);
