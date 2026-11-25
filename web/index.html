@@ -16,9 +16,10 @@
   <div class="document-title"><input id="filename" value="제목 없는 문서" aria-label="문서 이름" maxlength="120"><span id="filetype" class="pill">DOCX</span></div>
   <div class="header-actions"><button type="button" class="text-button" id="newDocument">새 문서</button><button type="button" class="text-button" id="templates">양식</button><button type="button" class="text-button" id="myDocuments">내 문서</button><button type="button" id="aiSettings" class="outline">⚙ AI 키 설정</button><button type="button" id="authButton" class="outline">로그인</button></div>
 </header>
-<div class="main-layout">
- <aside class="ai-panel">
+<div class="main-layout" id="mainLayout">
+ <aside class="ai-panel" id="aiPanel">
    <div class="panel-head"><div class="overline">DOCUMENT ASSISTANT</div><div class="panel-title">AI 도우미 <button type="button" id="toggleAI" title="AI 패널 닫기">−</button></div><p>작업할 문서를 설명하거나 수정할 부분을 요청하세요.</p></div>
+   <div class="chat-actions"><button type="button" id="newChat">새 대화</button><button type="button" id="chatHistory">대화 기록</button><button type="button" id="chatRetry" hidden>저장 재시도</button><span id="chatSaveStatus" role="status"></span></div>
    <div class="models" role="group" aria-label="AI 모델 선택">
      <button type="button" class="active" data-model="gpt">GPT</button><button type="button" data-model="gemini">Gemini</button><button type="button" data-model="claude">Claude</button>
    </div>
@@ -26,7 +27,9 @@
    <form id="aiForm" class="composer"><label for="aiPrompt" class="overline">AI 요청</label><textarea id="aiPrompt" rows="4" placeholder="예: 표의 빈칸을 채워 줘. 결재란은 그대로 유지해 줘."></textarea><div class="composer-bottom"><span id="aiStatus">연결 확인 중</span><button type="submit" class="primary" id="aiSend">작성 요청</button></div></form>
    <div class="ai-preview" id="aiPreview" hidden><b>AI 제안 미리보기</b><p id="aiPreviewText"></p><div id="aiEditChoices"></div><div class="flex-buttons"><button id="aiReject" type="button">취소</button><button id="aiApplySelected" type="button" hidden>선택 항목 적용</button><button id="aiApply" type="button" class="primary">문서에 적용</button></div></div><button type="button" id="aiUndo" hidden>AI 적용 전으로 되돌리기</button>
  </aside>
+ <button type="button" id="aiSplitter" class="ai-splitter" aria-label="AI 도우미 폭 조절" title="끌어서 AI 도우미 폭 조절"></button>
  <main class="editor-shell" id="editorShell">
+   <button type="button" id="showAI" class="ai-show" aria-controls="aiPanel" aria-expanded="false">☰ AI 도우미 열기</button>
    <div class="toolbar" role="toolbar" aria-label="문서 편집 도구">
      <label class="btn-file">파일 열기<input type="file" id="fileInput" accept=".docx,.hwp,.hwpx,.txt" hidden></label>
      <button type="button" id="saveFile" class="primary">DOCX 저장</button><button type="button" id="saveHwpx">HWPX 저장</button><button type="button" id="saveText">TXT 저장</button><span class="tool-divider"></span>
