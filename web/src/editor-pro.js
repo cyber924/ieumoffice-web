@@ -1,3 +1,4 @@
+import {tableGrid,insertColumn,deleteColumn,insertRow,deleteRow,columnWidths,setColumns,rangeCells,mergeRange,splitMerged} from './table-grid.js'
 // MiloSoft ribbon editor for new DOCX documents and safe read/modify mode on imported files.
 const ribbon = {
   '파일': [
@@ -22,8 +23,8 @@ const ribbon = {
   ],
   '표': [
     ['표 삽입','insertTable'],['행 추가','addRow'],['열 추가','addColumn'],['행 삭제','deleteRow'],['열 삭제','deleteColumn'],
-    ['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 가운데','centerCell'],['표 가운데 배치','centerTable'],['셀 배경','cellBackground'],['테두리색','borderColor'],
-    ['열 너비','columnWidth'],['행 높이','rowHeight'],['셀 여백','cellPadding'],['셀 세로 정렬','cellVertical'],['테두리 굵기','borderWidth'],['열 균등','distributeColumns'],['행 균등','distributeRows'],['페이지 폭에 맞춤','fitTable'],['표 변경 취소','undoTable']
+    ['전체 셀 선택','selectAllCells'],['셀 병합','mergeCells'],['셀 분할','splitCell'],['셀 가운데','centerCell'],['표 가운데 배치','centerTable'],['셀 배경','cellBackground'],['테두리색','borderColor'],
+    ['열 너비','columnWidth'],['행 높이','rowHeight'],['셀 여백','cellPadding'],['셀 세로 정렬','cellVertical'],['테두리 굵기','borderWidth'],['열 균등','distributeColumns'],['행 균등','distributeRows'],['페이지 폭에 맞춤','fitTable'],['표 변경 취소','undoTable'],['표 다시 실행','redoTable']
   ],
   '도구': [
     ['문서 검사','inspect'],['맞춤법 검사','spell'],['버전 비교','compare'],['AI 참고 검색','searchAI'],['문서 찾기','myDocuments']
@@ -34,7 +35,7 @@ const ribbon = {
     ['기업 프로필','miloProfile'],['PDF 양식 인식','miloPdf']
   ]
 }
-const needsNew = new Set(['today','hr','link','box','font','size','color','highlight','lineHeight','right','justify','heading','bullets','numbers','landscape','portrait','marginNormal','marginNarrow','deleteRow','deleteColumn','splitCell','cellBackground','borderColor','marks','columnWidth','rowHeight','cellPadding','cellVertical','borderWidth','distributeColumns','distributeRows','fitTable','undoTable'])
+const needsNew = new Set(['today','hr','link','box','font','size','color','highlight','lineHeight','right','justify','heading','bullets','numbers','landscape','portrait','marginNormal','marginNarrow','deleteRow','deleteColumn','splitCell','cellBackground','borderColor','marks','columnWidth','rowHeight','cellPadding','cellVertical','borderWidth','distributeColumns','distributeRows','fitTable','undoTable','redoTable','selectAllCells'])
 const htmlEsc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,compare,searchAI}) {
   const quick=document.querySelector('.toolbar')
@@ -66,10 +67,9 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
   }
   function exec(command,value){
     if(command==='justifyCenter'&&cell()){
-      const target=cell()
-      target.style.textAlign='center'
-      for(const p of target.querySelectorAll('p,div,h1,h2'))p.style.textAlign='center'
-      markDirty();toast('셀의 글자를 가운데 정렬했습니다.');return
+      const targets=activeCells().slice(),t=cell().closest('table');rememberTable(t)
+      for(const target of targets){target.style.textAlign='center';for(const p of target.querySelectorAll('p,div,h1,h2'))p.style.textAlign='center'}
+      markDirty();toast('선택한 셀을 가운데 정렬했습니다.');return
     }
     restore();document.execCommand(command,false,value);markDirty()
   }
@@ -110,66 +110,81 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     if(changes){markDirty();toast(changes+'곳을 바꿨습니다.')}else toast('일치하는 문구가 없습니다.')
   }
   function insertMarkup(markup){restore();document.execCommand('insertHTML',false,markup);markDirty()}
-  function rowDelete(){
-    const tr=cell()?.closest('tr')
-    if(!tr)return toast('표 안의 셀을 선택해 주세요.')
-    const tbl=tr.closest('table')
-    if(tbl.rows.length<=1)return toast('마지막 행은 삭제하지 않습니다.')
-    tr.remove();markDirty()
+  let selected=[],anchorCell=null,history=[],future=[]
+  function clearSelection(){for(const c of selected)c.classList.remove('table-selected');selected=[]}
+  function selectCell(c,extend=false){
+    if(!c||!paper.contains(c))return
+    const t=c.closest('table'),range=extend&&anchorCell?.closest('table')===t?rangeCells(t,anchorCell,c):[c]
+    clearSelection();selected=range.length?range:[c];for(const item of selected)item.classList.add('table-selected')
+    if(!extend)anchorCell=c
   }
-  function columnDelete(){
-    const c=cell()
-    if(!c)return toast('표 안의 셀을 선택해 주세요.')
-    const tbl=c.closest('table')
-    const index=c.cellIndex
-    if(Array.from(tbl.rows).some(r=>Array.from(r.cells).some(x=>x.colSpan>1||x.rowSpan>1)))return toast('병합된 셀이 포함된 표의 열 삭제는 지원하지 않습니다.')
-    if(tbl.rows[0]?.cells.length<=1)return toast('마지막 열은 삭제하지 않습니다.')
-    Array.from(tbl.rows).forEach(r=>r.cells[index]?.remove());markDirty()
+  paper.addEventListener('pointerdown',e=>{const c=e.target.closest?.('td,th');if(c&&paper.contains(c)){selectCell(c,e.shiftKey);if(e.shiftKey)e.preventDefault()}})
+  function activeCells(){const c=cell();if(selected.length&&selected.every(x=>x.isConnected&&x.closest('table')===c?.closest('table')))return selected;return c?[c]:[]}
+  function tableSnapshot(t){const copy=t.cloneNode(true);for(const c of copy.querySelectorAll('.table-selected'))c.classList.remove('table-selected');return copy.outerHTML}
+  function rememberTable(t){
+    clearSelection();const entry={table:t,html:tableSnapshot(t),after:null};history.push(entry);if(history.length>40)history.shift();future=[]
+    queueMicrotask(()=>{if(history.includes(entry)&&t.isConnected)entry.after=tableSnapshot(t)})
   }
-  function splitCell(){
-    const c=cell();if(!c)return toast('셀을 선택해 주세요.')
-    const span=c.colSpan
-    if(span<=1)return toast('병합된 셀을 선택해 주세요.')
-    c.colSpan=1
-    for(let i=1;i<span;i++){const created=document.createElement(c.tagName.toLowerCase());created.innerHTML='<br>';c.after(created)}
-    markDirty()
+  function applyHistory(from,to){
+    const entry=from[from.length-1];if(!entry?.table?.isConnected)return toast('되돌릴 표 변경이 없습니다.')
+    const table=entry.table;clearSelection()
+    if(entry.after&&entry.after!==tableSnapshot(table))return toast('이후 표 내용이 변경되어 안전하게 되돌릴 수 없습니다.')
+    from.pop();to.push({table,html:tableSnapshot(table),after:entry.html})
+    const clone=table.ownerDocument.createElement('template');clone.innerHTML=entry.html;const restored=clone.content.firstElementChild
+    for(const attr of Array.from(table.attributes))table.removeAttribute(attr.name)
+    for(const attr of Array.from(restored.attributes))table.setAttribute(attr.name,attr.value)
+    table.innerHTML=restored.innerHTML;anchorCell=null;markDirty()
   }
-  let tableUndo=null
-  function rememberTable(t){tableUndo={table:t,html:t.outerHTML}}
-  function simpleTable(t){return t&&!Array.from(t.querySelectorAll('td,th')).some(c=>c.colSpan>1||c.rowSpan>1)}
-  function prepareColumns(t){
-    const count=t.rows[0]?.cells.length||0
-    if(!count||!simpleTable(t)||Array.from(t.rows).some(r=>r.cells.length!==count))return null
-    let group=t.querySelector(':scope > colgroup')
-    const widths=Array.from(t.rows[0].cells,c=>Math.max(28,c.getBoundingClientRect().width))
-    if(!group||group.children.length!==count){group?.remove();group=document.createElement('colgroup');for(const w of widths){const col=document.createElement('col');col.style.width=w+'px';group.append(col)}t.prepend(group)}
-    t.style.width=Math.round(widths.reduce((a,b)=>a+b,0))+'px';t.style.tableLayout='fixed'
-    return Array.from(group.children)
+  function changeStructure(id){
+    const c=cell(),t=c?.closest('table');if(!t)return toast('표 안의 셀을 선택해 주세요.')
+    if(isImported())return toast('가져온 파일의 표 구조 변경은 아직 지원하지 않습니다.')
+    const group=activeCells().slice()
+    if((id==='deleteRow'||id==='deleteColumn')&&!confirm('선택한 '+(id==='deleteRow'?'행':'열')+'과 그 안의 내용이 삭제됩니다. 계속할까요?'))return
+    rememberTable(t)
+    let ok=false
+    if(id==='addRow')ok=insertRow(t,c)
+    if(id==='addColumn')ok=insertColumn(t,c)
+    if(id==='deleteRow')ok=deleteRow(t,c)
+    if(id==='deleteColumn')ok=deleteColumn(t,c)
+    if(id==='mergeCells'){
+      if(group.length<2){const g=tableGrid(t),e=g.cells.get(c),next=e&&g.slots[e.row]?.[e.col+e.colSpan]?.cell;if(next)group.push(next)}
+      ok=mergeRange(t,group)
+    }
+    if(id==='splitCell')ok=splitMerged(t,c)
+    if(!ok){history.pop();return toast('선택한 셀의 구조에서는 이 작업을 수행할 수 없습니다.')}
+    anchorCell=null;markDirty();toast('표 구조를 변경했습니다.')
   }
+  // Intercept the compact toolbar as well as the ribbon so both share one grid implementation.
+  for(const id of ['addRow','addColumn','mergeCells'])document.getElementById(id)?.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();changeStructure(id)},true)
+  function rowDelete(){changeStructure('deleteRow')}
+  function columnDelete(){changeStructure('deleteColumn')}
+  function splitCell(){changeStructure('splitCell')}
+  function prepareColumns(t){const g=tableGrid(t);if(!g.width)return null;const widths=columnWidths(t,g);setColumns(t,widths);return Array.from(t.querySelectorAll(':scope > colgroup > col'))}
   function numberInput(label,initial,min,max){const v=prompt(label,String(Math.round(initial)));if(v===null)return null;const n=Number(v);if(!Number.isFinite(n)||n<min||n>max){toast(min+'~'+max+' 사이의 숫자를 입력해 주세요.');return null}return n}
   function tableAction(id){
+    if(id==='undoTable'){applyHistory(history,future);return}
+    if(id==='redoTable'){applyHistory(future,history);return}
     const c=cell(),t=table();if(!c||!t)return toast('표 안의 셀을 선택해 주세요.')
-    if(id==='undoTable'){if(!tableUndo?.table?.isConnected)return toast('되돌릴 표 변경이 없습니다.');const old=tableUndo.table;old.outerHTML=tableUndo.html;tableUndo=null;markDirty();return toast('마지막 표 크기 변경을 되돌렸습니다.')}
-    if((id==='columnWidth'||id==='distributeColumns')&&!simpleTable(t))return toast('병합 셀이 없는 표에서 열 너비를 조절할 수 있습니다.')
+    const targets=activeCells().slice()
     if(id==='columnWidth'){
       const value=numberInput('선택한 열 너비 (px)',c.getBoundingClientRect().width,28,1000);if(value===null)return
-      rememberTable(t);const cols=prepareColumns(t);if(!cols){tableUndo=null;return toast('열 구조를 확인해 주세요.')}
-      cols[c.cellIndex].style.width=value+'px';t.style.width=Array.from(cols).reduce((a,col)=>a+parseFloat(col.style.width),0)+'px'
+      const pos=tableGrid(t).cells.get(c)?.col;rememberTable(t);const cols=prepareColumns(t);if(!cols||pos==null){history.pop();return toast('열 구조를 확인해 주세요.')}
+      cols[pos].style.width=value+'px';t.style.width=Array.from(cols).reduce((a,col)=>a+parseFloat(col.style.width),0)+'px'
     }else if(id==='rowHeight'){
       const row=c.closest('tr'),value=numberInput('선택한 행 높이 (px)',row.getBoundingClientRect().height,18,1000);if(value===null)return
       rememberTable(t);row.style.height=value+'px'
     }else if(id==='cellPadding'){
       const value=numberInput('선택한 셀 안쪽 여백 (px)',parseFloat(getComputedStyle(c).paddingLeft)||0,0,100);if(value===null)return
-      rememberTable(t);c.style.padding=value+'px'
+      rememberTable(t);for(const target of targets)target.style.padding=value+'px'
     }else if(id==='cellVertical'){
       const value=prompt('세로 정렬: 위, 가운데, 아래','가운데');if(value===null)return
       const alignment={'위':'top','가운데':'middle','아래':'bottom'}[value.trim()];if(!alignment)return toast('위, 가운데, 아래 중 하나를 입력해 주세요.')
-      rememberTable(t);c.style.verticalAlign=alignment
+      rememberTable(t);for(const target of targets)target.style.verticalAlign=alignment
     }else if(id==='borderWidth'){
       const value=numberInput('선택한 셀 테두리 굵기 (px)',1,1,10);if(value===null)return
-      rememberTable(t);c.style.borderStyle='solid';c.style.borderWidth=value+'px'
+      rememberTable(t);for(const target of targets){target.style.borderStyle='solid';target.style.borderWidth=value+'px'}
     }else if(id==='distributeColumns'){
-      rememberTable(t);const cols=prepareColumns(t);if(!cols){tableUndo=null;return toast('열 구조를 확인해 주세요.')}
+      rememberTable(t);const cols=prepareColumns(t);if(!cols){history.pop();return toast('열 구조를 확인해 주세요.')}
       const width=t.getBoundingClientRect().width/cols.length;for(const col of cols)col.style.width=width+'px'
     }else if(id==='distributeRows'){
       rememberTable(t);const rows=Array.from(t.rows),height=t.getBoundingClientRect().height/rows.length;for(const row of rows)row.style.height=height+'px'
@@ -179,19 +194,27 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     markDirty();toast('표 크기와 간격을 변경했습니다.')
   }
   let drag=null
+  function edgeAt(event){
+    const c=event.target.closest?.('td,th');if(!c||!paper.contains(c))return null
+    const t=c.closest('table'),g=tableGrid(t),e=g.cells.get(c),rect=c.getBoundingClientRect();if(!e)return null
+    const left=Math.abs(event.clientX-rect.left),right=Math.abs(event.clientX-rect.right),top=Math.abs(event.clientY-rect.top),bottom=Math.abs(event.clientY-rect.bottom),hit=7
+    if(Math.min(left,right)<=hit){const index=left<right?e.col-1:e.col+e.colSpan-1;if(index>=0&&index<g.width)return {kind:'column',t,index}}
+    if(Math.min(top,bottom)<=hit){const index=top<bottom?e.row-1:e.row+e.rowSpan-1;if(index>=0&&index<g.rows.length)return {kind:'row',t,index}}
+    return null
+  }
   paper.addEventListener('pointerdown',event=>{
-    if(isImported()||event.button!==0)return
-    const c=event.target.closest?.('td,th');if(!c||!paper.contains(c))return
-    const t=c.closest('table'),rect=c.getBoundingClientRect(),nearRight=Math.abs(event.clientX-rect.right)<5,nearBottom=Math.abs(event.clientY-rect.bottom)<5
-    if(!nearRight&&!nearBottom)return
-    if(nearRight&&!simpleTable(t))return
-    rememberTable(t)
-    if(nearRight){const cols=prepareColumns(t);if(!cols){tableUndo=null;return}drag={kind:'column',table:t,cols,index:c.cellIndex,start:event.clientX,original:parseFloat(cols[c.cellIndex].style.width),total:parseFloat(t.style.width)}}
-    else{const row=c.closest('tr');drag={kind:'row',row,start:event.clientY,original:row.getBoundingClientRect().height}}
+    if(isImported()||event.button!==0||event.shiftKey)return
+    const edge=edgeAt(event);if(!edge)return
+    rememberTable(edge.t)
+    if(edge.kind==='column'){const cols=prepareColumns(edge.t);if(!cols){history.pop();return};drag={kind:'column',table:edge.t,cols,index:edge.index,start:event.clientX,original:parseFloat(cols[edge.index].style.width),total:parseFloat(edge.t.style.width)}}
+    else{const row=edge.t.rows[edge.index];drag={kind:'row',row,start:event.clientY,original:row.getBoundingClientRect().height}}
     event.preventDefault();paper.setPointerCapture(event.pointerId)
   })
-  paper.addEventListener('pointermove',event=>{if(!drag)return;if(drag.kind==='column'){const width=Math.max(28,drag.original+event.clientX-drag.start);drag.cols[drag.index].style.width=width+'px';drag.table.style.width=(drag.total+width-drag.original)+'px'}else drag.row.style.height=Math.max(18,drag.original+event.clientY-drag.start)+'px';event.preventDefault()})
-  paper.addEventListener('pointerup',()=>{if(drag){drag=null;markDirty()}})
+  paper.addEventListener('pointermove',event=>{
+    if(!drag){const edge=isImported()?null:edgeAt(event);paper.style.cursor=edge?(edge.kind==='column'?'col-resize':'row-resize'):'';return}
+    if(drag.kind==='column'){const width=Math.max(28,drag.original+event.clientX-drag.start);drag.cols[drag.index].style.width=width+'px';drag.table.style.width=(drag.total+width-drag.original)+'px'}else drag.row.style.height=Math.max(18,drag.original+event.clientY-drag.start)+'px';event.preventDefault()
+  })
+  paper.addEventListener('pointerup',()=>{if(drag){const t=drag.table||drag.row.closest('table');drag=null;const entry=history.at(-1);if(entry?.table===t)entry.after=tableSnapshot(t);markDirty()}})
   paper.addEventListener('pointercancel',()=>{if(drag){drag=null;markDirty()}})
   const hexRegex=/^#[0-9A-Fa-f]{6}$/
   function styleCell(key,label){
@@ -199,8 +222,8 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
     const value=prompt(label,key==='backgroundColor'?'#eef3f9':'#8b98a9')
     if(value===null)return
     if(!hexRegex.test(value))return toast('색상은 #RRGGBB 형식으로 입력해 주세요.')
-    if(key==='backgroundColor')c.style.backgroundColor=value
-    else c.style.border='1px solid '+value
+    const targets=activeCells().slice();rememberTable(c.closest('table'))
+    for(const target of targets){if(key==='backgroundColor')target.style.backgroundColor=value;else target.style.border='1px solid '+value}
     markDirty()
   }
   function styleText(key,label,def){
@@ -248,7 +271,9 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
   }
   function run(id){
     if(noImported(id))return
-    if(['newDocument','fileInput','myDocuments','saveFile','cloudSave','cloudSaveAs','printDoc','templates','undo','redo','bold','italic','underline','alignLeft','alignCenter','insertTable','addRow','addColumn','mergeCells'].includes(id)){
+    if(id==='selectAllCells'){const t=table();if(!t)return toast('표 안의 셀을 선택해 주세요.');clearSelection();selected=Array.from(t.querySelectorAll('td,th')).filter(c=>c.closest('table')===t);for(const c of selected)c.classList.add('table-selected');return toast('표 전체를 선택했습니다. 여러 셀은 Shift를 누르고 선택할 수 있습니다.')}
+    if(['addRow','addColumn','mergeCells'].includes(id)){changeStructure(id);return}
+    if(['newDocument','fileInput','myDocuments','saveFile','cloudSave','cloudSaveAs','printDoc','templates','undo','redo','bold','italic','underline','alignLeft','alignCenter','insertTable'].includes(id)){
       click(id==='openFile'?'fileInput':id);return
     }
     if(id.startsWith('milo')){window.dispatchEvent(new CustomEvent('milosoft:milo-action',{detail:{action:id}}));return}
@@ -309,7 +334,7 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
         target.dataset.centerTable='true'
         markDirty();toast('표를 가운데 배치했습니다.');break
       }
-      case 'columnWidth':case 'rowHeight':case 'cellPadding':case 'cellVertical':case 'borderWidth':case 'distributeColumns':case 'distributeRows':case 'fitTable':case 'undoTable':tableAction(id);break
+      case 'columnWidth':case 'rowHeight':case 'cellPadding':case 'cellVertical':case 'borderWidth':case 'distributeColumns':case 'distributeRows':case 'fitTable':case 'undoTable':case 'redoTable':tableAction(id);break
       case 'cellBackground':styleCell('backgroundColor','셀 배경색 (#RRGGBB)');break
       case 'borderColor':styleCell('borderColor','테두리색 (#RRGGBB)');break
       case 'inspect':inspect();break
