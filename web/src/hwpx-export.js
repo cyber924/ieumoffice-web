@@ -1,5 +1,6 @@
 // HWPX is produced by the same rhwp engine used in IeumOffice.
 import JSZip from 'jszip'
+import {applyHwpxStyles} from './hwpx-styles.js'
 let enginePromise
 async function engine(){
  if(!enginePromise)enginePromise=(async()=>{
@@ -21,6 +22,23 @@ export async function exportHwpx(paper,loadEngine=engine){
   doc.createBlankDocument()
   // Stylesheets are not part of innerHTML: materialize the visible grid on a copy.
   const copy=paper.cloneNode(true)
+  // The editable view uses stylesheet rules, which do not accompany innerHTML.
+  // Pass the actual displayed formatting to the HTML-to-HWPX converter.
+  const originals=[paper,...paper.querySelectorAll('*')], copies=[copy,...copy.querySelectorAll('*')]
+  const view=paper.ownerDocument.defaultView
+  if(view?.getComputedStyle)for(let i=0;i<originals.length;i++){
+   const original=originals[i],target=copies[i],css=view.getComputedStyle(original)
+   if(!target?.style||!css)continue
+   for(const property of ['font-family','font-size','font-weight','font-style','color','text-align','vertical-align','background-color','padding-top','padding-right','padding-bottom','padding-left']){
+    const value=css.getPropertyValue(property)
+    if(value&&!/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(value))target.style.setProperty(property,value)
+   }
+   if(/^(?:TABLE|TR|TD|TH|COL)$/.test(original.tagName)){
+    const rect=original.getBoundingClientRect()
+    if(rect.width>0&&/^(?:TABLE|TD|TH|COL)$/.test(original.tagName))target.style.width=Math.round(rect.width)+'px'
+    if(rect.height>0&&original.tagName==='TR')target.style.height=Math.round(rect.height)+'px'
+   }
+  }
   for(const cell of copy.querySelectorAll('td,th')){
    const style=cell.style
    for(const side of ['Top','Right','Bottom','Left']){
@@ -90,7 +108,9 @@ export async function exportHwpx(paper,loadEngine=engine){
  if(!header)throw new Error('HWPX 서식을 확인하지 못했습니다.')
  const normalized=header.replace(/<hh:borderFill\b[^>]*>[\s\S]*?<\/hh:borderFill>/g,block=>
   /<hh:diagonal\b/.test(block)?block:block.replace(/(?=<hc:fillBrush\b|<\/hh:borderFill>)/,'<hh:diagonal type="SOLID" width="0.1 mm" color="none"/>'))
- zip.file('Contents/header.xml',normalized)
+ const styled=applyHwpxStyles(normalized,section,paper)
+ zip.file('Contents/header.xml',styled.header)
+ zip.file('Contents/section0.xml',styled.section)
  bytes=await zip.generateAsync({type:'uint8array',compression:'DEFLATE'})
  const verified=new HwpDocument(bytes)
  try{if(verified.pageCount()<1)throw new Error('HWPX 최종 파일을 다시 열지 못했습니다.')}finally{verified.free()}
