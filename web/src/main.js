@@ -335,7 +335,7 @@ $('aiForm').onsubmit=async e=>{
           const response=await fetch('/api/ai',{method:'POST',
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
-              model:selectedModel,mode:'labeled',prompt,selectedText,
+              model:selectedModel,mode:'labeled',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,selectedText,
               documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
@@ -358,7 +358,7 @@ $('aiForm').onsubmit=async e=>{
       for(const edit of pendingTableEdits)edit.source=sourceById.get(edit.cellId)||edit.source
       pendingProposal=''
       const missing=formRemaining(snapshot,pendingTableEdits)
-      const exampleCount=pendingTableEdits.filter(e=>e.source==='기본 예시값 (확인 후 수정)').length
+      const exampleCount=pendingTableEdits.filter(e=>isUnverifiedDraft(e.source)).length
       const addresses=new Map(snapshot.targets.map(t=>[t.cellId,t.address]))
       $('aiPreviewText').textContent=
         (pendingTableEdits.map(e=>e.label+' ['+(addresses.get(e.cellId)||e.cellId)+']'+(isUnverifiedDraft(e.source)?' [예시·초안 확인]':' [제공 정보]')+'\n  → '+e.value).join('\n\n')
@@ -371,7 +371,7 @@ $('aiForm').onsubmit=async e=>{
       $('aiPreview').hidden=false;showAIEditChoices()
       addMessage('assistant','양식 '+snapshot.targets.length+'개 빈칸을 인식하고 '+pendingTableEdits.length+
         '개 입력안을 준비했어. 예시값 '+exampleCount+'개는 실제 정보로 검토·수정해 줘. 기존 값과 표 구조는 유지하며 승인 시 한 번에 적용해.'+
-        (missing.length?' 입력 보류: '+missing.join(' · '):''))
+        (missing.length?' 입력되지 않은 항목: '+missing.join(' · '):'')+(errors.length?' AI 요청 오류: '+errors.join(' / '):''))
       return
     }
     if(semanticMode&&requestedTableFill){
@@ -385,7 +385,7 @@ $('aiForm').onsubmit=async e=>{
           const response=await fetch('/api/ai',{method:'POST',
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
-              model:selectedModel,mode:'semantic',prompt,
+              model:selectedModel,mode:'semantic',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,
               selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
@@ -468,7 +468,7 @@ $('aiForm').onsubmit=async e=>{
     }
     $('aiPreview').hidden=false;showAIEditChoices()
   }catch(err){
-    if(requestedTableFill && (directEdits.length||fillMode==='sample')){
+    if(requestedTableFill && directEdits.length){
       const completed=completeDraft(snapshot,directEdits,[],completionOptions)
       pendingTableEdits=validateTableEdits(pendingTableSnapshot,completed.edits)
       const sources=new Map(completed.edits.map(e=>[e.cellId,e.source]))
@@ -479,7 +479,7 @@ $('aiForm').onsubmit=async e=>{
         $('aiApply').textContent='표 '+pendingTableEdits.length+'개 셀에 적용'
         $('aiApply').disabled=false
         $('aiPreview').hidden=false;showAIEditChoices()
-        addMessage('assistant','AI 호출 실패로 예시값 또는 사용자 지정값 '+pendingTableEdits.length+'개만 준비했습니다. 실제 정보와 생성된 예시를 반드시 확인 후 적용해 주세요.')
+        addMessage('assistant','AI 호출 실패로 사용자 지정값 '+pendingTableEdits.length+'개만 준비했습니다. 실제 정보와 생성된 예시를 반드시 확인 후 적용해 주세요.')
       }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
     }else addMessage('assistant','요청이 완료되지 않았습니다: '+err.message)
   }

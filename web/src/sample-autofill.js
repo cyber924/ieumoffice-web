@@ -53,16 +53,9 @@ export function completeDraft(snapshot,direct=[],generated=[],{mode='sample',tod
   if(!t||t.current||!value||value.length>1000||accepted.has(entry.cellId))continue
   // Model output cannot invent identity, financial facts, approvals, or dates.
   // These must come from the user, current date, or explicitly marked placeholders.
-  if(index>=direct.length && (['date','personal','numeric','approval'].includes(t.kind)||
+  if(mode==='strict' && index>=direct.length && (['date','personal','numeric','approval'].includes(t.kind)||
       ['date','author','department','amount'].includes(t.baseKey||t.fieldKey)))continue
   accepted.set(t.cellId,{cellId:t.cellId,value,source:entry.source||'AI 초안 (검토 필요)'})
- }
- if(mode==='sample'){
-  for(const t of snapshot.targets){
-   if(accepted.has(t.cellId)||t.current)continue
-   const value=exampleFor(t,{today,profile,prompt})
-   if(value)accepted.set(t.cellId,{cellId:t.cellId,value,source:sample})
-  }
  }
  const edits=snapshot.targets.filter(t=>accepted.has(t.cellId)).map(t=>accepted.get(t.cellId))
  return {edits,examples:edits.filter(e=>e.source===sample).length,
