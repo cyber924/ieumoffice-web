@@ -248,3 +248,22 @@ export async function setTemplateFavorite(id,enabled){
  const ref=modules.fs.doc(db,'users',uid,'miloTemplateFavorites',id)
  if(enabled)await modules.fs.setDoc(ref,{updatedAt:modules.fs.serverTimestamp()});else await modules.fs.deleteDoc(ref);checkUser(uid)
 }
+
+// Each message is independently stored, so long conversations are not limited by a single document.
+export async function saveChatMessage(threadId,messageId,entry){
+ const uid=requireUser();if(!/^[a-zA-Z0-9_-]{1,80}$/.test(threadId)||!/^[a-zA-Z0-9_-]{1,80}$/.test(messageId))throw Error('대화 식별자가 올바르지 않습니다.')
+ const text=String(entry.text||'');if(!text||text.length>100000)throw Error('메시지 길이를 확인해 주세요.')
+ const thread=modules.fs.doc(db,'users',uid,'aiConversations',threadId),message=modules.fs.doc(db,'users',uid,'aiConversations',threadId,'messages',messageId)
+ const batch=modules.fs.writeBatch(db);batch.set(thread,{title:String(entry.title||'새 대화').slice(0,120),updatedAt:modules.fs.serverTimestamp()},{merge:true})
+ batch.set(message,{role:entry.role==='user'?'user':'assistant',text,createdAtMs:entry.createdAtMs,sequence:entry.sequence})
+ checkUser(uid);await batch.commit();checkUser(uid)
+}
+export async function listChats(){
+ const uid=requireUser(),snap=await modules.fs.getDocs(modules.fs.query(modules.fs.collection(db,'users',uid,'aiConversations'),modules.fs.orderBy('updatedAt','desc')));checkUser(uid)
+ return snap.docs.map(d=>({id:d.id,...d.data()}))
+}
+export async function readChat(id){
+ const uid=requireUser();if(!/^[a-zA-Z0-9_-]{1,80}$/.test(id))throw Error('대화 식별자가 올바르지 않습니다.')
+ const col=modules.fs.collection(db,'users',uid,'aiConversations',id,'messages'),snap=await modules.fs.getDocs(modules.fs.query(col,modules.fs.orderBy('sequence','asc')));checkUser(uid)
+ return snap.docs.map(d=>({id:d.id,...d.data()}))
+}
