@@ -109,6 +109,7 @@ paper.addEventListener('input',markDirty)
 paper.addEventListener('mouseup',()=>{recentSelection=String(window.getSelection()?.toString()||'').slice(0,10000)})
 paper.addEventListener('keyup',()=>{recentSelection=String(window.getSelection()?.toString()||'').slice(0,10000)})
 paper.addEventListener('focusin',e=>{if(e.target.closest('td,th'))lastFocusedCell=e.target.closest('td,th')})
+paper.addEventListener('pointerdown',e=>{const c=e.target.closest?.('td,th');if(c&&paper.contains(c))lastFocusedCell=c})
 function proposalBlocks(){const template=document.createElement('template');template.innerHTML=markdownToDocumentHtml(pendingProposal);return [...template.content.children]}
 function showAIEditChoices(){
  const box=$('aiEditChoices');box.replaceChildren()
