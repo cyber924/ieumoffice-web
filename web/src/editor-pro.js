@@ -162,8 +162,8 @@ export function installRibbon({paper,isImported,markDirty,toast,getCell,inspect,
   function prepareColumns(t){const g=tableGrid(t);if(!g.width)return null;const widths=columnWidths(t,g);setColumns(t,widths);return Array.from(t.querySelectorAll(':scope > colgroup > col'))}
   function numberInput(label,initial,min,max){const v=prompt(label,String(Math.round(initial)));if(v===null)return null;const n=Number(v);if(!Number.isFinite(n)||n<min||n>max){toast(min+'~'+max+' 사이의 숫자를 입력해 주세요.');return null}return n}
   function tableAction(id){
-    if(id==='undoTable'){applyHistory(history,future);return}
-    if(id==='redoTable'){applyHistory(future,history);return}
+    if(id==='undoTable'){window.dispatchEvent(new Event('milosoft:undo'));return}
+    if(id==='redoTable'){window.dispatchEvent(new Event('milosoft:redo'));return}
     const c=cell(),t=table();if(!c||!t)return toast('표 안의 셀을 선택해 주세요.')
     const targets=activeCells().slice()
     if(id==='columnWidth'){

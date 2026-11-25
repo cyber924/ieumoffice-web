@@ -19,7 +19,7 @@ import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} fro
 import {installMiloSuite} from './milo-suite.js'
 import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh,listSharedTemplates,saveSharedTemplate,deleteSharedTemplate,listTemplateFavorites,setTemplateFavorite} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh,listSharedTemplates,saveSharedTemplate,deleteSharedTemplate,listTemplateFavorites,setTemplateFavorite,saveChatMessage,listChats,readChat} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -81,7 +81,28 @@ function restoreDraft(){
   updateWords();updateMode();scheduleDocumentMap()
 }
 let saveTimer
+// Keep document and table changes in a single chronological undo history.
+let editHistory=[],editHistoryIndex=-1,historyRestoring=false
+function historySnapshot(){const copy=paper.cloneNode(true);for(const c of copy.querySelectorAll('.table-selected')){c.classList.remove('table-selected');if(!c.className)c.removeAttribute('class')}return copy.innerHTML}
+function resetEditHistory(){editHistory=[historySnapshot()];editHistoryIndex=0}
+function recordEditHistory(){
+ if(historyRestoring)return
+ const html=historySnapshot();if(editHistoryIndex<0){editHistory=[html];editHistoryIndex=0;return}
+ if(editHistory[editHistoryIndex]===html)return
+ editHistory.splice(editHistoryIndex+1);editHistory.push(html);if(editHistory.length>80)editHistory.shift();editHistoryIndex=editHistory.length-1
+}
+function restoreEditHistory(direction){
+ const next=editHistoryIndex+direction
+ if(next<0||next>=editHistory.length){toast(direction<0?'더 이상 취소할 작업이 없습니다.':'다시 실행할 작업이 없습니다.');return}
+ editHistoryIndex=next;historyRestoring=true
+ try{paper.innerHTML=editHistory[next];lastFocusedCell=null;aiUndoSnapshot=null;$('aiUndo').hidden=true;markDirty();refreshDocumentMap()}finally{historyRestoring=false}
+ toast(direction<0?'작업을 취소했습니다.':'작업을 다시 실행했습니다.')
+}
+window.addEventListener('milosoft:undo',()=>restoreEditHistory(-1))
+window.addEventListener('milosoft:redo',()=>restoreEditHistory(1))
+paper.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey)||e.altKey)return;const k=e.key.toLowerCase();if(k==='z'||k==='y'){e.preventDefault();restoreEditHistory(k==='y'||e.shiftKey?1:-1)}})
 function markDirty(){
+  recordEditHistory()
   editRevision++;dirty=true;updateWords();scheduleDocumentMap();setStatus('문서 수정됨 · 로컬 임시 저장')
   clearTimeout(saveTimer)
   saveTimer=setTimeout(()=>{
@@ -103,7 +124,9 @@ function exec(command,value){
   }
   paper.focus();document.execCommand(command,false,value);markDirty()
 }
-for(const [id,cmd,val] of [['bold','bold'],['italic','italic'],['underline','underline'],['undo','undo'],['redo','redo'],['alignLeft','justifyLeft'],['alignCenter','justifyCenter']])$(id).onclick=()=>exec(cmd,val)
+for(const [id,cmd,val] of [['bold','bold'],['italic','italic'],['underline','underline'],['alignLeft','justifyLeft'],['alignCenter','justifyCenter']])$(id).onclick=()=>exec(cmd,val)
+$('undo').onclick=()=>restoreEditHistory(-1)
+$('redo').onclick=()=>restoreEditHistory(1)
 $('filename').addEventListener('input',markDirty)
 paper.addEventListener('input',markDirty)
 paper.addEventListener('mouseup',()=>{recentSelection=String(window.getSelection()?.toString()||'').slice(0,10000)})
@@ -151,7 +174,7 @@ $('mergeCells').onclick=()=>{
 $('newDocument').onclick=()=>{
   if(dirty&&!confirm('새 문서를 만들까요? 저장하지 않은 현재 변경 내용은 사라질 수 있습니다.'))return
   state=null;cloudId=null;lastFocusedCell=null;referenceDocuments=[];aiUndoSnapshot=null;$('aiUndo').hidden=true
-  paper.innerHTML=initial;$('filename').value='제목 없는 문서'
+  paper.innerHTML=initial;resetEditHistory();$('filename').value='제목 없는 문서'
   delete paper.dataset.orientation;delete paper.dataset.margin
   activeRememberedTemplate=null
   localStorage.removeItem('milosoft-draft-v2');dirty=false;updateMode();updateWords();scheduleDocumentMap();setStatus('새 문서 준비 완료')
@@ -191,7 +214,7 @@ async function loadFile(file){
       state=parsed;paper.innerHTML=parsed.html
     }catch(e){setStatus('파일 열기 실패');return toast(e.message)}
   }
-  aiUndoSnapshot=null;$('aiUndo').hidden=true;cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
+  resetEditHistory();lastFocusedCell=null;aiUndoSnapshot=null;$('aiUndo').hidden=true;cloudId=null;referenceDocuments=[];$('filename').value=file.name.replace(/\.(docx|hwpx|txt)$/i,'')
   dirty=false;updateMode();updateWords();refreshDocumentMap();setStatus(file.name+' 열기 완료 · 제한 편집 모드')
   void restoreRememberedTemplate()
   toast('파일을 열었습니다. 복잡한 서식은 저장 후 확인하세요.')
@@ -273,11 +296,53 @@ document.querySelectorAll('[data-model]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('[data-model]').forEach(x=>x.classList.remove('active'))
   b.classList.add('active');selectedModel=b.dataset.model;toast(b.textContent+' 모델 선택됨')
 })
+let chatId=crypto.randomUUID(),chatSequence=Date.now()*1000,chatOwner=null,chatQueue=[],chatSaving=false
+function drawMessage(role,msg){
+ const div=document.createElement('div');div.className=role==='user'?'user-message':'assistant-message';div.textContent=msg
+ $('messages').append(div);$('messages').scrollTop=$('messages').scrollHeight
+}
+function newChatScreen(){
+ chatId=crypto.randomUUID();chatSequence=Date.now()*1000;$('messages').replaceChildren();$('aiPrompt').value=''
+ $('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null
+}
+function updateChatStatus(){
+ const failed=chatQueue.filter(x=>x.uid===user()?.uid)
+ $('chatRetry').hidden=!failed.length
+ $('chatSaveStatus').textContent=failed.length?'대화 저장 대기 '+failed.length+'건':(user()?'대화 자동 저장':'로그인 후 저장')
+}
+async function flushChats(){
+ if(chatSaving||!user())return
+ const uid=user().uid;chatSaving=true;updateChatStatus()
+ try{
+  while(user()?.uid===uid){const entry=chatQueue.find(x=>x.uid===uid);if(!entry)break
+   try{await saveChatMessage(entry.threadId,entry.id,entry);chatQueue.splice(chatQueue.indexOf(entry),1)}
+   catch(error){$('chatSaveStatus').textContent='대화 저장 실패 · 재시도 필요';$('chatRetry').hidden=false;return}
+  }
+ }finally{chatSaving=false;if(!$('chatRetry').hidden||chatQueue.some(x=>x.uid===user()?.uid))updateChatStatus();else $('chatSaveStatus').textContent=user()?'대화 저장 완료':'로그인 후 저장'}
+}
 function addMessage(role,msg){
-  const div=document.createElement('div')
-  div.className=role==='user'?'user-message':'assistant-message'
-  div.textContent=msg
-  $('messages').append(div);$('messages').scrollTop=$('messages').scrollHeight
+ drawMessage(role,msg)
+ const uid=user()?.uid;if(!uid)return
+ chatSequence=Math.max(chatSequence+1,Date.now()*1000)
+ chatQueue.push({uid,threadId:chatId,id:crypto.randomUUID(),role,text:String(msg),title:fileName(),createdAtMs:Date.now(),sequence:chatSequence})
+ updateChatStatus();void flushChats()
+}
+$('newChat').onclick=()=>{if($('aiSend').disabled)return toast('AI 응답이 끝난 후 새 대화를 시작해 주세요.');const unsaved=chatQueue.some(x=>x.uid===user()?.uid);newChatScreen();toast(unsaved?'새 대화가 열렸습니다. 이전 대화 저장 대기분을 재시도해 주세요.':'새 대화를 시작했습니다. 이전 대화는 저장 기록에 남습니다.')}
+$('chatRetry').onclick=()=>void flushChats()
+$('chatHistory').onclick=async()=>{
+ if(!user())return toast('대화 기록을 보려면 로그인해 주세요.')
+ if($('aiSend').disabled)return toast('AI 응답이 끝난 후 대화 기록을 열어 주세요.')
+ const uid=user().uid;openModal('<h2>대화 기록</h2><p>이전에 저장한 내 AI 대화입니다.</p><div id="chatHistoryList" class="chat-history-list">불러오는 중…</div>')
+ try{
+  const rows=await listChats();if(user()?.uid!==uid||!$('chatHistoryList'))return
+  const list=$('chatHistoryList');list.replaceChildren()
+  if(!rows.length){list.textContent='저장된 대화가 없습니다.';return}
+  for(const item of rows){const button=document.createElement('button'),title=document.createElement('strong'),time=document.createElement('small')
+   title.textContent=item.title||'새 대화';time.textContent=item.updatedAt?.toDate?.().toLocaleString('ko-KR')||'날짜 확인 중';button.append(title,time)
+   button.onclick=async()=>{button.disabled=true;try{const messages=await readChat(item.id);if(user()?.uid!==uid)return;chatId=item.id;chatSequence=Math.max(Date.now()*1000,...messages.map(x=>Number(x.sequence)||0));$('messages').replaceChildren();for(const m of messages)drawMessage(m.role,m.text);$('aiPreview').hidden=true;pendingProposal='';pendingTableEdits=[];pendingTableSnapshot=null;$('modal').close()}catch(e){toast('대화 불러오기 실패: '+e.message)}finally{button.disabled=false}}
+   list.append(button)
+  }
+ }catch(e){if($('chatHistoryList'))$('chatHistoryList').textContent='대화 기록 조회 실패: '+e.message}
 }
 $('aiForm').onsubmit=async e=>{
   e.preventDefault()
@@ -759,7 +824,15 @@ async function showVersions(row){
     }
   }catch(err){if($('versionList'))$('versionList').textContent='버전 조회 실패: '+err.message}
 }
-$('toggleAI').onclick=()=>{document.body.classList.add('ai-hidden');toast('AI 패널 숨김 · 새로고침하면 다시 표시됩니다.')}
+function setAIPanel(hidden){document.body.classList.toggle('ai-hidden',hidden);$('showAI').setAttribute('aria-expanded',String(!hidden));try{localStorage.setItem('milosoft-ai-hidden',hidden?'1':'0')}catch{}}
+$('toggleAI').onclick=()=>setAIPanel(true)
+$('showAI').onclick=()=>setAIPanel(false)
+try{setAIPanel(localStorage.getItem('milosoft-ai-hidden')==='1');const width=Number(localStorage.getItem('milosoft-ai-width'));if(width>=25&&width<=55)$('mainLayout').style.setProperty('--ai-panel-width',width+'%')}catch{}
+const splitter=$('aiSplitter');let resizingAI=false
+splitter.addEventListener('pointerdown',e=>{if(e.button!==0)return;resizingAI=true;splitter.setPointerCapture(e.pointerId);e.preventDefault()})
+splitter.addEventListener('pointermove',e=>{if(!resizingAI)return;const bounds=$('mainLayout').getBoundingClientRect(),width=Math.max(25,Math.min(55,(e.clientX-bounds.left)/bounds.width*100));$('mainLayout').style.setProperty('--ai-panel-width',width+'%')})
+splitter.addEventListener('pointerup',()=>{if(!resizingAI)return;resizingAI=false;try{localStorage.setItem('milosoft-ai-width',parseFloat($('mainLayout').style.getPropertyValue('--ai-panel-width')))}catch{}})
+
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}})
 const config={
   apiKey:import.meta.env.VITE_FIREBASE_API_KEY,
@@ -770,6 +843,8 @@ const config={
   storageBucket:import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
 }
 initCloud(config,u=>{
+  if((u?.uid||null)!==chatOwner){chatOwner=u?.uid||null;newChatScreen()}
+  updateChatStatus();if(u)void flushChats()
   $('authButton').textContent=u?.email||'로그인'
   if(!u){referenceDocuments=[];referenceSnapshot=[];cloudId=null}
   $('aiStatus').textContent=u?'연결 상태 확인':'로그인 후 AI 사용'
@@ -777,6 +852,7 @@ initCloud(config,u=>{
   void restoreRememberedTemplate()
 }).then(connected=>{if(!connected)$('aiStatus').textContent='AI·Firebase 설정 전'}).catch(e=>{console.warn('Firebase configuration unavailable',e.message);$('aiStatus').textContent='연결 설정 오류'})
 restoreDraft()
+resetEditHistory()
 
 function documentInspection(){
  const result=inspectDocument(paper)
