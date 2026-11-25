@@ -156,3 +156,9 @@ dialog.wide-modal{width:min(980px,94vw);max-width:980px;max-height:90vh;overflow
 #aiEditChoices{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow:auto;margin:8px 0}#aiEditChoices label{display:flex;align-items:flex-start;gap:7px;font-size:11px;line-height:1.5}#aiEditChoices label span{overflow-wrap:anywhere}#aiUndo{margin:6px 10px}
 
 .paper td.table-selected,.paper th.table-selected{outline:2px solid #345cf1;outline-offset:-2px}
+
+/* AI panel */
+@media (min-width:681px){.main-layout{grid-template-columns:minmax(260px,var(--ai-panel-width,35%)) 6px minmax(0,1fr)}body.ai-hidden .main-layout{grid-template-columns:minmax(0,1fr)}body.ai-hidden .ai-splitter{display:none}}
+.ai-panel{min-width:0}.ai-splitter{padding:0;border:0;border-radius:0;background:#e4eaf5;cursor:col-resize;touch-action:none}.ai-splitter:hover,.ai-splitter:focus{background:#7897fb}.ai-show{display:none;align-self:flex-start;margin:6px 12px;font-size:12px}body.ai-hidden .ai-show{display:block}.chat-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 17px 10px}.chat-actions button{font-size:11px;padding:6px 8px}#chatSaveStatus{font-size:11px;color:#718098}.chat-history-list{display:grid;gap:8px;max-height:55vh;overflow:auto}.chat-history-list button{text-align:left}.chat-history-list small{display:block;color:#718098;margin-top:3px}
+@media(max-width:680px){.ai-splitter{display:none}.ai-panel{max-height:45vh}.ai-panel .messages{display:flex;min-height:60px}.ai-show{margin:5px}.chat-actions{padding:4px 8px}}
+@media print{.ai-splitter,.ai-show{display:none!important}}
