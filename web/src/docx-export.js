@@ -86,7 +86,7 @@ function inline(node,style={}){
  return result
 }
 function paragraph(node,{heading=0}={}){
- const styles=heading?{bold:true,size:heading===1?18:15}:{}
+ const styles=parseStyle(node,heading?{bold:true,size:heading===1?18:15}:{})
  const alignment=node?.style?.textAlign||(heading?'center':'left')
  const align=({center:'center',right:'right',justify:'both',start:'left',end:'right'})[alignment]||'left'
  let pr='<w:pPr><w:jc w:val="'+align+'"/>'
@@ -130,15 +130,22 @@ function tableLayout(table){
  }
  return {rows:out,cols:Math.max(1,max)}
 }
+function tableWidthTwips(table){
+ const raw=String(table.style?.width||'').trim().toLowerCase()
+ if(raw.endsWith('%'))return clamp(Math.round(9000*parseFloat(raw)/100),1,9000)
+ if(raw.endsWith('px'))return clamp(Math.round(parseFloat(raw)*15),1,9000)
+ return 9000
+}
 function tableWidths(table,cols){
+ const totalWidth=tableWidthTwips(table)
  const group=table.querySelector(':scope > colgroup'),nodes=group?Array.from(group.children).filter(n=>local(n)==='col'):[]
  let sizes=nodes.length===cols?nodes.map(n=>parseFloat(n.style?.width||n.getAttribute('width')||'')):[]
  if(sizes.length!==cols||sizes.some(n=>!Number.isFinite(n)||n<=0)){
   const cells=Array.from(table.rows?.[0]?.cells||[])
   sizes=cells.length===cols&&cells.every(c=>(c.colSpan||1)===1)?cells.map(c=>parseFloat(c.style?.width||c.getAttribute('width')||'')):[]
  }
- if(sizes.length!==cols||sizes.some(n=>!Number.isFinite(n)||n<=0))return Array(cols).fill(Math.floor(9000/cols))
- const total=sizes.reduce((a,b)=>a+b,0);return sizes.map(n=>Math.max(1,Math.round(9000*n/total)))
+ if(sizes.length!==cols||sizes.some(n=>!Number.isFinite(n)||n<=0))return Array(cols).fill(Math.floor(totalWidth/cols))
+ const total=sizes.reduce((a,b)=>a+b,0);return sizes.map(n=>Math.max(1,Math.round(totalWidth*n/total)))
 }
 function rowHeightTwips(row){
  const value=String(row?.style?.height||row?.getAttribute('height')||'').trim().toLowerCase()
@@ -153,6 +160,15 @@ function cellXml(item,colCount,widths){
  let pr='<w:tcPr><w:tcW w:w="'+width+'" w:type="dxa"/>'
  if(span>1)pr+='<w:gridSpan w:val="'+span+'"/>'
  if(item.vertical)pr+='<w:vMerge'+(item.vertical==='restart'?' w:val="restart"':'')+'/>'
+ if(cell?.style?.verticalAlign){const align=cell.style.verticalAlign;pr+='<w:vAlign w:val="'+(align==='middle'?'center':align==='bottom'?'bottom':'top')+'"/>'}
+ const padding=cell?.style?.padding
+ if(padding){const n=parseFloat(padding);if(Number.isFinite(n)){const twips=clamp(Math.round(n*(padding.includes('pt')?20:15)),0,1440);pr+='<w:tcMar>'+['top','left','bottom','right'].map(side=>'<w:'+side+' w:w="'+twips+'" w:type="dxa"/>').join('')+'</w:tcMar>'}}
+ const borderColor=cell?.style?.borderColor||cell?.style?.borderTopColor
+ const borderWidth=parseFloat(cell?.style?.borderWidth||cell?.style?.borderTopWidth||'')
+ if(borderColor||Number.isFinite(borderWidth)){
+  const size=Number.isFinite(borderWidth)?clamp(Math.round(borderWidth*6),2,96):6
+  pr+='<w:tcBorders>'+['top','left','bottom','right'].map(side=>'<w:'+side+' w:val="single" w:sz="'+size+'" w:color="'+hex(borderColor,'8B98A9')+'"/>').join('')+'</w:tcBorders>'
+ }
  const background=cell?.style?.backgroundColor
  if(background)pr+='<w:shd w:val="clear" w:fill="'+hex(background,'FFFFFF')+'"/>'
  pr+='</w:tcPr>'
@@ -168,7 +184,7 @@ function cellXml(item,colCount,widths){
 }
 function tableXml(table){
  const {rows,cols}=tableLayout(table),widths=tableWidths(table,cols)
- let xml='<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/>'+
+ let xml='<w:tbl><w:tblPr><w:tblW w:w="'+tableWidthTwips(table)+'" w:type="dxa"/>'+
   (table.dataset?.centerTable==='true'?'<w:jc w:val="center"/>':'')+
   '<w:tblLayout w:type="fixed"/><w:tblBorders>'
  for(const edge of ['top','left','bottom','right','insideH','insideV'])xml+='<w:'+edge+' w:val="single" w:sz="6" w:color="8B98A9"/>'
@@ -257,7 +273,14 @@ export async function exportNewDocx(paper){
  '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
  '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
  '</Relationships>')
- const xml=documentXml(paper)
+ const copy=paper.cloneNode(true),view=paper.ownerDocument?.defaultView
+ if(view?.getComputedStyle){
+  const originals=[paper,...paper.querySelectorAll('*')],clones=[copy,...copy.querySelectorAll('*')]
+  originals.forEach((node,i)=>{const target=clones[i];if(!target?.style)return;const css=view.getComputedStyle(node)
+   for(const prop of ['font-family','font-size','font-weight','font-style','color','text-align','vertical-align','background-color']){const value=css.getPropertyValue(prop);if(value&&!/^(?:transparent|rgba\(0, 0, 0, 0\))$/.test(value))target.style.setProperty(prop,value)}
+  })
+ }
+ const xml=documentXml(copy)
  const expectedImages=paper.querySelectorAll('img').length
  if(imageContext.length!==expectedImages)throw new Error('일부 그림을 Word에 저장할 수 없습니다. PNG/JPEG 이미지를 확인해 주세요. (최대 25개)')
  zip.file('word/document.xml',xml)
