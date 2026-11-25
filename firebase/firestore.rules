@@ -4,6 +4,20 @@ service cloud.firestore {
     function owner(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
+    function administrator() {
+      return request.auth != null && request.auth.token.email == 'cyber924@naver.com';
+    }
+    // The designated administrator has access to all Firestore documents.
+    match /{document=**} {
+      allow read, write: if administrator();
+    }
+    match /miloTemplates/{templateId} {
+      allow read: if true;
+      allow create, update, delete: if administrator();
+    }
+    match /users/{userId}/miloTemplateFavorites/{templateId} {
+      allow read, write: if owner(userId);
+    }
     match /users/{userId}/documents/{documentId} {
       function validMain() {
         let d = request.resource.data;

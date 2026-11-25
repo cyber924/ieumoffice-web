@@ -108,10 +108,17 @@ export async function saveCloud(name,blob,kind,id,documentData){
   }
 }
 export async function listCloud(){
-  const uid=requireUser()
-  const col=modules.fs.collection(db,'users',uid,'documents')
-  const snap=await modules.fs.getDocs(modules.fs.query(col,modules.fs.limit(150)))
-  return snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.updatedAt?.seconds||0)-(a.updatedAt?.seconds||0))
+  const uid=requireUser(),col=modules.fs.collection(db,'users',uid,'documents'),rows=[]
+  let cursor=null
+  for(let page=0;page<10;page++){
+    const clauses=[modules.fs.orderBy(modules.fs.documentId()),modules.fs.limit(100)]
+    if(cursor)clauses.push(modules.fs.startAfter(cursor))
+    const snap=await modules.fs.getDocs(modules.fs.query(col,...clauses));checkUser(uid)
+    rows.push(...snap.docs.map(d=>({id:d.id,...d.data()})))
+    if(snap.size<100)break
+    cursor=snap.docs[snap.docs.length-1]
+  }
+  return rows.sort((a,b)=>(b.updatedAt?.seconds||0)-(a.updatedAt?.seconds||0))
 }
 export async function loadCloud(meta){
   const uid=requireUser()
@@ -212,4 +219,32 @@ export async function saveSharedNotice(item){
 export async function recordNoticeRefresh(){
  const uid=requireUser(),ref=modules.fs.doc(db,'miloSyncLocks','bizinfo');checkUser(uid)
  await modules.fs.setDoc(ref,{lastCompletedAt:modules.fs.serverTimestamp()});checkUser(uid)
+}
+
+export async function listSharedTemplates(){
+ if(!db)throw new Error('Firebase 연결이 필요합니다.')
+ const snap=await modules.fs.getDocs(modules.fs.query(modules.fs.collection(db,'miloTemplates'),modules.fs.limit(500)))
+ return snap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>typeof x.title==='string'&&Array.isArray(x.fields)).sort((a,b)=>a.title.localeCompare(b.title,'ko'))
+}
+export async function saveSharedTemplate(value,{overwrite=false}={}){
+ const uid=requireUser();if(signedUser?.email?.toLowerCase()!=='cyber924@naver.com')throw Error('양식 등록은 관리자만 가능합니다.')
+ const title=String(value.title||'').trim().slice(0,80),category=String(value.category||'기타').trim().slice(0,30),fields=Array.isArray(value.fields)?value.fields.map(x=>String(x).trim().slice(0,80)).filter(Boolean).slice(0,25):[]
+ if(!title||fields.length<2)throw Error('양식 제목과 항목을 입력하세요.')
+ const id=value.id||await catalogId(title);checkUser(uid)
+ const ref=modules.fs.doc(db,'miloTemplates',id)
+ const result=await modules.fs.runTransaction(db,async tx=>{const prev=await tx.get(ref);if(prev.exists()&&!overwrite)return false;tx.set(ref,{title,category,fields,source:value.source==='AI'?'AI':'기본',updatedAt:modules.fs.serverTimestamp()});return true})
+ checkUser(uid);return {id,created:result}
+}
+export async function deleteSharedTemplate(id){
+ const uid=requireUser();if(signedUser?.email?.toLowerCase()!=='cyber924@naver.com')throw Error('양식 삭제는 관리자만 가능합니다.')
+ if(!/^[0-9a-f]{64}$/.test(id||''))throw Error('양식 ID가 올바르지 않습니다.')
+ await modules.fs.deleteDoc(modules.fs.doc(db,'miloTemplates',id));checkUser(uid)
+}
+export async function listTemplateFavorites(){
+ const uid=requireUser();const snap=await modules.fs.getDocs(modules.fs.collection(db,'users',uid,'miloTemplateFavorites'));checkUser(uid);return snap.docs.map(x=>x.id)
+}
+export async function setTemplateFavorite(id,enabled){
+ const uid=requireUser();if(!/^[0-9a-f]{64}$/.test(id||''))throw Error('양식 ID가 올바르지 않습니다.')
+ const ref=modules.fs.doc(db,'users',uid,'miloTemplateFavorites',id)
+ if(enabled)await modules.fs.setDoc(ref,{updatedAt:modules.fs.serverTimestamp()});else await modules.fs.deleteDoc(ref);checkUser(uid)
 }

@@ -1,4 +1,5 @@
 import './styles.css'
+import {DEFAULT_TEMPLATES,cleanTemplate,filterTemplates,ADMIN_EMAIL} from './template-library.js'
 import {markdownToDocumentHtml} from './document-markdown.js'
 import {exportHwpx} from './hwpx-export.js'
 import {ensureHwpxTableBorders} from './hwpx-borders.js'
@@ -16,7 +17,7 @@ import {describeTemplate,verifyTemplate,saveTemplateLocal,loadTemplateLocal} fro
 import {installMiloSuite} from './milo-suite.js'
 import {loadProfile,profileContext} from './company-profile.js'
 import {openPackage,savePackage,createDocx,importedModeLimitations,insertTableMarkup,addTableRow,addTableColumn,safeFilename} from './formats.js'
-import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh} from './cloud.js'
+import {initCloud,isCloudReady,user,token,login,register,logout,saveCloud,listCloud,loadCloud,extractDocumentData,listRevisions,readCloudIndexed,saveTemplateMemory,readTemplateMemory,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh,listSharedTemplates,saveSharedTemplate,deleteSharedTemplate,listTemplateFavorites,setTemplateFavorite} from './cloud.js'
 
 const $=id=>document.getElementById(id)
 const paper=$('paper')
@@ -204,29 +205,58 @@ $('saveText').onclick=()=>{
   toast('TXT 파일을 다운로드했습니다. 표와 서식은 텍스트로 저장됩니다.')
 }
 $('printDoc').onclick=()=>window.print()
-function openModal(html){$('modalContent').innerHTML=html;$('modal').showModal()}
+function openModal(html){$('modal').classList.remove('wide-modal');$('modalContent').innerHTML=html;$('modal').showModal()}
 $('closeModal').onclick=()=>$('modal').close()
-$('templates').onclick=()=>{
-  openModal('<h2>문서 양식 선택</h2><p>새 문서에 표 양식을 구성합니다. 기존 DOCX/HWPX 파일의 표 구조는 수정하지 않습니다.</p><div class="modal-list" id="templateList"></div>')
-  const templates=[
-    ['품의서',['작성일','부서','기안자','제목','요청금액','품의 내용']],
-    ['업무보고서',['보고일','부서','담당자','업무 내용','진행 현황','향후 계획']],
-    ['신청서',['신청자','연락처','신청 내용','신청일','확인란']],
-    ['계약 검토표',['계약명','계약 상대방','계약 금액','기간','검토 의견','담당자']],
-    ['회의록',['회의명','회의일','참석자','안건','결정사항','후속조치']],
-    ['기본 양식',['항목','내용']]
-  ]
-  for(const [name,rows] of templates){
-    const btn=document.createElement('button');btn.textContent=name
-    btn.onclick=()=>{
-      if(dirty&&!confirm('현재 문서를 새 양식으로 교체할까요?'))return
-      state=null;cloudId=null;referenceDocuments=[]
-      paper.innerHTML='<h1>'+name+'</h1><table><tbody>'+rows.map((r,i)=>'<tr><th>'+r+'</th><td><br></td></tr>').join('')+'</tbody></table><p><br></p>'
-      $('filename').value=name;activeRememberedTemplate=null;updateMode();markDirty();refreshDocumentMap();$('modal').close()
-    }
-    $('templateList').append(btn)
+function showTemplateLibrary(){
+ openModal('<h2>문서 양식 선택</h2><p>양식을 미리 보고 새 문서에 적용하세요. 기존 파일은 원본을 보관해 주세요.</p><div class="template-controls"><input id="templateSearch" class="field" type="search" placeholder="양식 이름 또는 항목 검색"><select id="templateCategory" class="field"><option value="">모든 분야</option></select><button id="templateFavorites" type="button">☆ 즐겨찾기</button><button id="recommendTemplates" type="button">AI 양식 추천</button></div><p id="templateStatus">양식 불러오는 중…</p><div class="template-cards" id="templateList"></div><div class="pagination" id="templatePages"></div>')
+ $('modal').classList.add('wide-modal')
+ const host=$('templateList'),status=$('templateStatus'),search=$('templateSearch'),category=$('templateCategory'),favBtn=$('templateFavorites'),recommend=$('recommendTemplates'),pages=$('templatePages')
+ const admin=user()?.email?.toLowerCase()===ADMIN_EMAIL
+ let items=DEFAULT_TEMPLATES.map(t=>({...t,id:null})),favorites=new Set(),onlyFavorites=false,page=1
+ const el=(tag,text)=>{const n=document.createElement(tag);if(text)n.textContent=text;return n}
+ const button=(text,cb)=>{const b=el('button',text);b.type='button';b.onclick=cb;return b}
+ const apply=t=>{
+  if(dirty&&!confirm('현재 문서를 새 양식으로 교체할까요? 저장하지 않은 변경 내용은 사라질 수 있습니다.'))return
+  state=null;cloudId=null;referenceDocuments=[];referenceSnapshot=[];paper.replaceChildren()
+  const title=el('h1',t.title),table=el('table'),body=el('tbody')
+  for(const field of t.fields){const tr=el('tr'),th=el('th',field),td=el('td');td.append(el('br'));tr.append(th,td);body.append(tr)}
+  table.append(body);paper.append(title,table,el('p'));$('filename').value=t.title;activeRememberedTemplate=null;updateMode();markDirty();refreshDocumentMap();$('modal').close()
+ }
+ const draw=()=>{
+  host.replaceChildren();pages.replaceChildren();const found=filterTemplates(items,category.value,search.value,favorites,onlyFavorites),total=Math.max(1,Math.ceil(found.length/8));page=Math.min(page,total)
+  for(const t of found.slice((page-1)*8,page*8)){
+   const card=el('article');card.className='template-card';card.append(el('strong',t.title),el('small',t.category+' · '+(t.source||'기본')+' · '+t.fields.length+'개 항목'))
+   const actions=el('div');actions.className='template-actions'
+   actions.append(button('미리보기',()=>{const modal=el('div');modal.className='template-preview';modal.append(el('strong',t.title),el('p',t.fields.join(' · ')),button('이 양식 사용',()=>apply(t)),button('닫기',()=>modal.remove()));card.append(modal)}),button('양식 사용',()=>apply(t)))
+   if(t.id&&user()){const favorite=favorites.has(t.id);actions.append(button(favorite?'★ 즐겨찾기':'☆ 즐겨찾기',async()=>{try{await setTemplateFavorite(t.id,!favorite);if(favorite)favorites.delete(t.id);else favorites.add(t.id);draw()}catch(e){toast('즐겨찾기 저장 실패: '+e.message)}}))}
+   if(admin&&t.id){actions.append(button('수정',async()=>{const title=prompt('양식 이름',t.title);if(title===null)return;const fields=prompt('항목을 쉼표로 구분해 입력하세요',t.fields.join(', '));if(fields===null)return;try{await saveSharedTemplate({...cleanTemplate({...t,title,fields:fields.split(',')}),id:t.id},{overwrite:true});await reload()}catch(e){toast('수정 실패: '+e.message)}}),button('삭제',async()=>{if(!confirm('이 공통 양식을 삭제할까요?'))return;try{await deleteSharedTemplate(t.id);await reload()}catch(e){toast('삭제 실패: '+e.message)}}))}
+   card.append(actions);host.append(card)
   }
+  if(!found.length)host.append(el('p','검색된 양식이 없습니다.'))
+  const prev=button('이전',()=>{page--;draw()}),next=button('다음',()=>{page++;draw()});prev.disabled=page<=1;next.disabled=page>=total;pages.append(prev,el('span',page+' / '+total+' · '+found.length+'개'),next)
+ }
+ const categories=()=>{const prev=category.value;category.replaceChildren(new Option('모든 분야',''));for(const c of [...new Set(items.map(x=>x.category))].sort())category.append(new Option(c,c));category.value=[...category.options].some(o=>o.value===prev)?prev:''}
+ const reload=async()=>{const saved=await listSharedTemplates();items=saved.length?saved:DEFAULT_TEMPLATES.map(t=>({...t,id:null}));categories();page=1;draw();status.textContent=saved.length?'공통 양식 '+items.length+'개 · DB 연결됨':'기본 양식 표시 · 관리자가 DB를 초기화하면 공통 저장됩니다.'}
+ search.oninput=()=>{page=1;draw()};category.onchange=()=>{page=1;draw()};favBtn.onclick=()=>{onlyFavorites=!onlyFavorites;favBtn.textContent=onlyFavorites?'★ 즐겨찾기만':'☆ 즐겨찾기';page=1;draw()}
+ recommend.hidden=!admin
+ recommend.onclick=async()=>{
+  if(!admin)return;const field=prompt('추천할 양식의 분야를 입력하세요.','사업');if(!field?.trim())return
+  recommend.disabled=true;status.textContent='AI 양식 3개를 추천하고 DB에 저장 중…'
+  try{
+   const tokenValue=await token();if(!tokenValue)throw Error('로그인이 필요합니다.')
+   const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokenValue},body:JSON.stringify({mode:'templateRecommendation',model:selectedModel,prompt:'분야: '+field.trim().slice(0,80)+'; 기존 이름: '+items.map(x=>x.title).join(', ').slice(0,2000),providerKey:sessionKeys[selectedModel]||''})})
+   const data=await res.json();if(!res.ok)throw Error(data.error||'AI 추천 실패')
+   const proposed=(data.templates||[]).map(x=>cleanTemplate({...x,source:'AI'}));if(!proposed.length)throw Error('사용할 수 있는 추천 양식이 없습니다.')
+   let saved=0,duplicates=0;for(const t of proposed){const r=await saveSharedTemplate(t);r.created?saved++:duplicates++}
+   await reload();status.textContent='AI 양식 '+saved+'개 저장 · 중복 '+duplicates+'개'
+  }catch(e){status.textContent='AI 양식 저장 실패: '+e.message}finally{recommend.disabled=false}
+ }
+ draw();(async()=>{try{
+  const present=await listSharedTemplates();if(admin&&!present.length){for(const t of DEFAULT_TEMPLATES)await saveSharedTemplate(t)}
+  await reload();if(user()){favorites=new Set(await listTemplateFavorites());draw()}
+ }catch(e){status.textContent='DB 연결 실패 · 기본 양식을 표시합니다: '+e.message;draw()}})()
 }
+$('templates').onclick=showTemplateLibrary
 document.querySelectorAll('[data-model]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('[data-model]').forEach(x=>x.classList.remove('active'))
   b.classList.add('active');selectedModel=b.dataset.model;toast(b.textContent+' 모델 선택됨')
@@ -600,12 +630,16 @@ function dateText(value){
   const d=value.toDate?.()||new Date(value.seconds?value.seconds*1000:value)
   return Number.isNaN(d.getTime())?'날짜 미상':d.toLocaleString('ko-KR')
 }
+let documentPage=1
 function renderDocumentRows(rows){
   const list=$('documentsList')
   if(!list)return
   list.replaceChildren()
+  const pager=$('documentsPages');if(pager)pager.replaceChildren()
   if(!rows.length){list.textContent='해당하는 문서가 없습니다.';return}
-  for(const row of rows){
+  const total=Math.ceil(rows.length/10);documentPage=Math.min(documentPage,total)
+  if(pager){const previous=document.createElement('button'),next=document.createElement('button'),label=document.createElement('span');previous.textContent='이전';next.textContent='다음';label.textContent=documentPage+' / '+total+' · '+rows.length+'개';previous.disabled=documentPage<=1;next.disabled=documentPage>=total;previous.onclick=()=>{documentPage--;renderDocumentRows(rows)};next.onclick=()=>{documentPage++;renderDocumentRows(rows)};pager.append(previous,label,next)}
+  for(const row of rows.slice((documentPage-1)*10,documentPage*10)){
     const item=document.createElement('div');item.className='cloud-document'
     const caption=document.createElement('div');caption.className='cloud-document-info'
     const title=document.createElement('strong');title.textContent=row.name||'이름 없는 문서'
@@ -662,15 +696,17 @@ let cloudRows=[]
 async function showCloudDocuments(){
   if(!isCloudReady())return toast('Firebase 연결 후 내 문서를 사용할 수 있습니다.')
   if(!user())return loginDialog()
-  openModal('<h2>내 문서 검색·재활용</h2><p>Firestore에 저장된 본문 일부와 제목으로 검색하고, 이전 파일 버전을 선택하거나 AI 참고 문서로 지정할 수 있습니다.</p><input id="documentSearch" class="field" type="search" placeholder="제목·문서 내용 검색" aria-label="문서 검색"><p id="referenceCount">AI 참고 문서 '+referenceDocuments.length+'개 선택됨</p><div id="documentsList">목록을 조회하고 있습니다…</div>')
+  openModal('<h2>내 문서 검색·재활용</h2><p>Firestore에 저장된 본문 일부와 제목으로 검색하고, 이전 파일 버전을 선택하거나 AI 참고 문서로 지정할 수 있습니다.</p><input id="documentSearch" class="field" type="search" placeholder="제목·문서 내용 검색" aria-label="문서 검색"><p id="referenceCount">AI 참고 문서 '+referenceDocuments.length+'개 선택됨</p><div id="documentsList">목록을 조회하고 있습니다…</div><div id="documentsPages" class="pagination"></div>')
+  $('modal').classList.add('wide-modal');documentPage=1
   try{
     cloudRows=await listCloud()
     if(!$('documentSearch'))return
+    if(cloudRows.length>=1000){const p=document.createElement('p');p.textContent='최근 정렬 전 최대 1,000개의 문서를 불러왔습니다.';$('documentsPages').before(p)}
     const search=()=>{
       const term=$('documentSearch').value.trim().toLocaleLowerCase()
       renderDocumentRows(cloudRows.filter(r=>!term||(r.name||'').toLocaleLowerCase().includes(term)||(r.textPreview||'').toLocaleLowerCase().includes(term)))
     }
-    $('documentSearch').addEventListener('input',search)
+    $('documentSearch').addEventListener('input',()=>{documentPage=1;search()})
     search()
   }catch(err){
     if($('documentsList'))$('documentsList').textContent='문서 조회 실패: '+err.message
