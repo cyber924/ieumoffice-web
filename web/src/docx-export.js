@@ -141,10 +141,13 @@ function cellXml(item,colCount){
  if(background)pr+='<w:shd w:val="clear" w:fill="'+hex(background,'FFFFFF')+'"/>'
  pr+='</w:tcPr>'
  if(!cell)return '<w:tc>'+pr+'<w:p/></w:tc>'
- const blocks=blockChildren(cell)
- const center=cell.style?.textAlign==='center'
- const content=center?'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'+
-  '<w:r><w:t xml:space="preserve">'+xmlEscape(text(cell))+'</w:t></w:r></w:p>':(blocks||paragraph(cell))
+ // Never flatten centered cells: they may contain images or rich text.
+ const renderCell=cell.style?.textAlign==='center'?cell.cloneNode(true):cell
+ if(renderCell!==cell)for(const child of renderCell.querySelectorAll('p,div,h1,h2,h3,li')){
+  if(child.closest('td,th')===renderCell&&!child.style.textAlign)child.style.textAlign='center'
+ }
+ const blocks=blockChildren(renderCell)
+ const content=blocks||paragraph(renderCell)
  return '<w:tc>'+pr+content+'</w:tc>'
 }
 function tableXml(table){
@@ -187,6 +190,7 @@ function blockChildren(parent){
   if(tag==='table'){
    flush();out+=tableXml(node);continue
   }
+  if(tag==='img'){inlineBuffer.push(node);continue}
   if(['p','h1','h2','h3','h4','h5','h6','li'].includes(tag)){
    flush();out+=paragraph(node,{heading:tag==='h1'?1:tag==='h2'?2:0});continue
   }
@@ -236,7 +240,10 @@ export async function exportNewDocx(paper){
  '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
  '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
  '</Relationships>')
- zip.file('word/document.xml',documentXml(paper))
+ const xml=documentXml(paper)
+ const expectedImages=paper.querySelectorAll('img').length
+ if(imageContext.length!==expectedImages)throw new Error('일부 그림을 Word에 저장할 수 없습니다. PNG/JPEG 이미지를 확인해 주세요. (최대 25개)')
+ zip.file('word/document.xml',xml)
  if(imageContext.length){
   const relations=['<?xml version="1.0" encoding="UTF-8"?>',
    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">']

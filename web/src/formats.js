@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import {distributeTextRuns} from './preserve-text-runs.js'
 
 const enc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 const direct = (n, local) => Array.from(n?.children || []).filter(x => x.localName === local)
@@ -18,9 +19,8 @@ function setText(node, value, isHwp) {
   const text = String(value ?? '')
   const ts = descendants(node,'t')
   if (ts.length) {
-    ts[0].textContent=text
-    if (!isHwp) ts[0].setAttribute('xml:space','preserve')
-    for(let i=1;i<ts.length;i++)ts[i].textContent=''
+    const parts=distributeTextRuns(ts.map(t=>t.textContent||''),text)
+    ts.forEach((t,i)=>{t.textContent=parts[i];if(!isHwp)t.setAttribute('xml:space','preserve')})
     return
   }
   const doc=node.ownerDocument
@@ -315,11 +315,18 @@ function bindNewRows(state,paper){
 }
 export async function savePackage(state,paper) {
   if(!state)return createDocx(paper)
+  // Never flatten a parent cell across nested tables; nested cells have their own bindings.
+  for(const el of paper.querySelectorAll('[data-bind]')){
+    if(!el.querySelector('table'))continue
+    const item=state.bindings.get(el.dataset.bind);if(!item)continue
+    const copy=el.cloneNode(true);for(const table of copy.querySelectorAll('table'))table.remove()
+    if((copy.textContent||'').trim()!==tableText(item.node).trim())throw new Error('중첩 표 바깥 셀의 글자는 원본 보존을 위해 수정할 수 없습니다. 사본으로 편집해 주세요.')
+  }
   bindNewRows(state,paper)
   let changed=false
   for(const el of paper.querySelectorAll('[data-bind]')){
     const item=state.bindings.get(el.dataset.bind)
-    if(!item || el.tagName==='TR' || el.dataset.mixed==='true')continue
+    if(!item || el.tagName==='TR' || el.dataset.mixed==='true' || el.querySelector('table'))continue
     const text=el.innerText.replace(/\n$/,'')
     if(text!==item.text){
       setText(item.node,text,state.type==='hwpx')
