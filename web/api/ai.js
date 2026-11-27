@@ -1,3 +1,4 @@
+import {validModel} from '../src/ai-models.js'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import {parseTableProposals,tableDraftIntent,tablePromptGuide} from './table-output.js'
 const PROJECT=process.env.FIREBASE_PROJECT_ID
@@ -32,7 +33,7 @@ async function providerRequest(body,key){
  if(body.model==='gemini'){
   const k=key||process.env.GEMINI_API_KEY
   if(!k)throw new Error('Gemini API 키가 설정되지 않았습니다.')
-  const geminiModel=process.env.GEMINI_MODEL||'gemini-3.8-flash'
+  const geminiModel=body.modelId||process.env.GEMINI_MODEL||'gemini-3.8-flash'
   res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(geminiModel)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({systemInstruction:{parts:[{text:guide}]},contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:4500,...(['table','report','semantic','labeled','design','transform','promptRecommendation','templateRecommendation'].includes(body.mode)?{responseMimeType:'application/json'}:{})}})})
   data=await res.json()
   if(!res.ok){
@@ -46,13 +47,13 @@ async function providerRequest(body,key){
  if(body.model==='claude'){
   const k=key||process.env.ANTHROPIC_API_KEY
   if(!k)throw new Error('Claude API 키가 설정되지 않았습니다.')
-  res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:process.env.CLAUDE_MODEL||'claude-sonnet-4-5-20250929',system:guide,max_tokens:4500,messages:[{role:'user',content:prompt}]})})
+  res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:body.modelId||process.env.CLAUDE_MODEL||'claude-sonnet-4-5-20250929',system:guide,max_tokens:4500,messages:[{role:'user',content:prompt}]})})
   data=await res.json();if(!res.ok)throw new Error('Claude API 오류 ('+res.status+')')
   return data.content?.filter(p=>p.type==='text').map(p=>p.text).join('')||''
  }
  const k=key||process.env.OPENAI_API_KEY
  if(!k)throw new Error('GPT API 키가 설정되지 않았습니다.')
- res=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+k},body:JSON.stringify({model:process.env.OPENAI_MODEL||'gpt-5-mini',instructions:guide,input:prompt,max_output_tokens:4500})})
+ res=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+k},body:JSON.stringify({model:body.modelId||process.env.OPENAI_MODEL||'gpt-5-mini',instructions:guide,input:prompt,max_output_tokens:4500})})
  data=await res.json();if(!res.ok)throw new Error('GPT API 오류 ('+res.status+')')
  return data.output_text||data.output?.flatMap(p=>p.content||[]).filter(p=>p.type==='output_text').map(p=>p.text).join('')||''
 }
@@ -65,6 +66,7 @@ export default async function handler(req,res){
  try{
   const data=req.body||{}
   if(!['gpt','gemini','claude'].includes(data.model))return res.status(400).json({error:'지원하지 않는 AI 모델입니다.'})
+  if(data.modelId!==undefined&&!validModel(data.model,data.modelId))return res.status(400).json({error:'선택한 AI 모델을 지원하지 않습니다.'})
   const mode=data.mode==='transform'?'transform':data.mode==='templateRecommendation'?'templateRecommendation':data.mode==='promptRecommendation'?'promptRecommendation':data.mode==='design'?'design':data.mode==='labeled'?'labeled':data.mode==='report'?'report':data.mode==='semantic'?'semantic':data.mode==='table'?'table':'text'
   const tableCells=Array.isArray(data.tableCells)?data.tableCells.slice(0,100).filter(x=>/^t\d+r\d+c\d+$/.test(x?.cellId||'')).map(x=>({
     cellId:x.cellId,label:useText(x.label).slice(0,160),current:useText(x.current).slice(0,300),fieldKey:useText(x.fieldKey).slice(0,32),address:useText(x.address).slice(0,32),kind:useText(x.kind).slice(0,32),
@@ -72,7 +74,7 @@ export default async function handler(req,res){
     columnHeader:useText(x.columnHeader).slice(0,100),
     table:Number(x.table)||0,row:Number(x.row)||0,column:Number(x.column)||0
   })):[]
-  const payload={model:data.model,mode,draftMode:data.draftMode==='strict'?'strict':'sample',prompt:useText(data.prompt).slice(0,4000),selectedText:useText(data.selectedText).slice(0,8000),documentText:useText(data.documentText).slice(0,24000),tableCells}
+  const payload={model:data.model,modelId:data.modelId||'',mode,draftMode:data.draftMode==='strict'?'strict':'sample',prompt:useText(data.prompt).slice(0,4000),selectedText:useText(data.selectedText).slice(0,8000),documentText:useText(data.documentText).slice(0,24000),tableCells}
   const providerKey=useText(data.providerKey)
   if(!payload.prompt)return res.status(400).json({error:'AI 지시를 입력해 주세요.'})
   if(providerKey.length>500)return res.status(400).json({error:'API 키 입력 길이를 확인해 주세요.'})
@@ -169,7 +171,7 @@ export default async function handler(req,res){
   return res.status(200).json({suggestion:response})
  }catch(err){
   const message=String(err?.message||'')
-  const safe=/API 키가 설정되지 않았습니다|Gemini 모델을 사용할 수 없습니다|Gemini 요청 한도 초과|Gemini API 접근 거부|Gemini API 오류/.test(message)
+  const safe=/API 키가 설정되지 않았습니다|Gemini 모델을 사용할 수 없습니다|Gemini 요청 한도 초과|Gemini API 접근 거부|Gemini API 오류|GPT API 오류 \(\d+\)|Claude API 오류 \(\d+\)/.test(message)
   return res.status(502).json({error:safe?message:'AI 호출 실패: 서버 연결을 점검해 주세요.'})
  }
 }

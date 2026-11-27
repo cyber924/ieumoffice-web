@@ -1,4 +1,5 @@
 import './styles.css'
+import {AI_MODELS,validModel,loadModelPreferences} from './ai-models.js'
 import {inspectDocument,compareDocumentText} from './document-review.js'
 import {selectedEdits,canRestoreAI} from './ai-review.js'
 import {DEFAULT_TEMPLATES,cleanTemplate,filterTemplates,ADMIN_EMAIL} from './template-library.js'
@@ -26,6 +27,8 @@ const paper=$('paper')
 const initial=paper.innerHTML
 let state=null
 let selectedModel='gpt'
+const modelPreferences=loadModelPreferences(window.localStorage)
+const currentModelId=()=>modelPreferences[selectedModel]||''
 // BYOK keys intentionally remain only in this browser tab memory.
 const sessionKeys={gpt:'',gemini:'',claude:''}
 let cloudId=null
@@ -279,7 +282,7 @@ function showTemplateLibrary(){
   recommend.disabled=true;status.textContent='AI 양식 3개를 추천하고 DB에 저장 중…'
   try{
    const tokenValue=await token();if(!tokenValue)throw Error('로그인이 필요합니다.')
-   const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokenValue},body:JSON.stringify({mode:'templateRecommendation',model:selectedModel,prompt:'분야: '+field.trim().slice(0,80)+'; 기존 이름: '+items.map(x=>x.title).join(', ').slice(0,2000),providerKey:sessionKeys[selectedModel]||''})})
+   const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tokenValue},body:JSON.stringify({mode:'templateRecommendation',model:selectedModel,modelId:currentModelId(),prompt:'분야: '+field.trim().slice(0,80)+'; 기존 이름: '+items.map(x=>x.title).join(', ').slice(0,2000),providerKey:sessionKeys[selectedModel]||''})})
    const data=await res.json();if(!res.ok)throw Error(data.error||'AI 추천 실패')
    const proposed=(data.templates||[]).map(x=>cleanTemplate({...x,source:'AI'}));if(!proposed.length)throw Error('사용할 수 있는 추천 양식이 없습니다.')
    let saved=0,duplicates=0;for(const t of proposed){const r=await saveSharedTemplate(t);r.created?saved++:duplicates++}
@@ -292,9 +295,22 @@ function showTemplateLibrary(){
  }catch(e){status.textContent='DB 연결 실패 · 기본 양식을 표시합니다: '+e.message;draw()}})()
 }
 $('templates').onclick=showTemplateLibrary
+function renderModelChoices(){
+ const select=$('aiModelChoice')
+ select.replaceChildren(new Option('서버 기본 모델 (기존 설정)',''),...AI_MODELS[selectedModel].map(([id,label])=>new Option(label,id)))
+ select.value=currentModelId()
+}
+$('aiModelChoice').onchange=()=>{
+ const id=$('aiModelChoice').value
+ if(!validModel(selectedModel,id))return
+ modelPreferences[selectedModel]=id
+ try{localStorage.setItem('milo-ai-models-v1',JSON.stringify(modelPreferences))}catch{}
+ toast($('aiModelChoice').selectedOptions[0].textContent+' 선택됨')
+}
+renderModelChoices()
 document.querySelectorAll('[data-model]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('[data-model]').forEach(x=>x.classList.remove('active'))
-  b.classList.add('active');selectedModel=b.dataset.model;toast(b.textContent+' 모델 선택됨')
+  b.classList.add('active');selectedModel=b.dataset.model;renderModelChoices();toast(b.textContent+' 모델 선택됨')
 })
 let chatId=crypto.randomUUID(),chatSequence=Date.now()*1000,chatOwner=null,chatQueue=[],chatSaving=false
 function drawMessage(role,msg){
@@ -401,7 +417,7 @@ $('aiForm').onsubmit=async e=>{
           const response=await fetch('/api/ai',{method:'POST',
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
-              model:selectedModel,mode:'labeled',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,selectedText,
+              model:selectedModel,modelId:currentModelId(),mode:'labeled',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,selectedText,
               documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
@@ -451,7 +467,7 @@ $('aiForm').onsubmit=async e=>{
           const response=await fetch('/api/ai',{method:'POST',
             headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},
             body:JSON.stringify({
-              model:selectedModel,mode:'semantic',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,
+              model:selectedModel,modelId:currentModelId(),mode:'semantic',draftMode:fillMode,prompt:prompt+'\n오늘 날짜: '+today,
               selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),
               providerKey:sessionKeys[selectedModel]||'',tableCells:chunks[index]
             })})
@@ -487,7 +503,7 @@ $('aiForm').onsubmit=async e=>{
         (warnings.length?' '+warnings.join(' '):''))
       return
     }
-    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
+    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authToken},body:JSON.stringify({model:selectedModel,modelId:currentModelId(),prompt,selectedText,documentText:(paper.innerText.slice(0,14500)+'\n\n'+referenceText.slice(0,5500)+businessContext).slice(0,24000),providerKey:sessionKeys[selectedModel]||'',tableCells:requestedTableFill?snapshot.targets:[],mode:requestedTableFill?(reportMode?'report':'table'):'text'})})
     const data=await res.json()
     if(!res.ok)throw new Error(data.error||'AI 요청 실패')
     const rawEdits=Array.isArray(data.edits)?data.edits:[]
@@ -929,7 +945,7 @@ const convertToDocxCopy=(kind)=>{
 const mediaTools=installMediaTools({paper,isImported:()=>Boolean(state),convertToDocxCopy,markDirty,toast})
 installMiloSuite({
  paper,toast,markDirty,openModal,convertToDocxCopy,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh,
- getUser:user,getToken:token,getModel:()=>selectedModel,
+ getUser:user,getToken:token,getModel:()=>selectedModel,getModelId:currentModelId,
  getProviderKey:()=>sessionKeys[selectedModel]||'',
  setFilename:name=>{$('filename').value=name},
  setPrompt:value=>{$('aiPrompt').value=value;$('aiPrompt').focus()},
@@ -1062,7 +1078,7 @@ async function suggestDocumentDesign(){
  try{
    const response=await fetch('/api/ai',{method:'POST',headers:{
      'Content-Type':'application/json',Authorization:'Bearer '+access
-   },body:JSON.stringify({model:selectedModel,mode:'design',
+   },body:JSON.stringify({model:selectedModel,modelId:currentModelId(),mode:'design',
      prompt:'문서를 읽고 제목·소제목·본문의 적합한 서식 역할을 구분하고 하나의 스타일을 추천해 줘.',
      documentText:JSON.stringify({blocks:analysis.roles.slice(0,120),tables:analysis.tables}),
      providerKey:sessionKeys[selectedModel]||''})})

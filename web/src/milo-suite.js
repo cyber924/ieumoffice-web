@@ -19,7 +19,7 @@ function external(url){
 }
 function short(s,size=150){return String(s||'').slice(0,size)}
 function parseJSON(result){return result.json().catch(()=>({}))}
-export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getProviderKey,setFilename,setPrompt,fileName,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh}){
+export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxCopy,getUser,getToken,getModel,getModelId=()=>'',getProviderKey,setFilename,setPrompt,fileName,savePersonalPrompt,listPersonalPrompts,readNotices,readNoticeRefreshTime,saveSharedNotice,recordNoticeRefresh}){
  let savedRange=null
  const cache={gallery:[],nextCursor:null,business:[]}
  const uid=()=>getUser()?.uid||'guest'
@@ -48,7 +48,7 @@ export function installMiloSuite({paper,toast,markDirty,openModal,convertToDocxC
   if(!auth)throw Error('AI 기능은 Firebase 로그인이 필요합니다.')
   const res=await fetch('/api/ai',{method:'POST',headers:{
    'Content-Type':'application/json',Authorization:'Bearer '+auth
-  },body:JSON.stringify({mode,model:getModel(),prompt,
+  },body:JSON.stringify({mode,model:getModel(),modelId:getModelId(),prompt,
     selectedText:'',documentText:short(data.documentText||'',24000),
     providerKey:getProviderKey(),tableCells:[]})})
   const json=await parseJSON(res)
